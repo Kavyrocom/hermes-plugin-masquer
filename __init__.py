@@ -1,4 +1,4 @@
-"""Hermes plugin: /masquer — auto filter plus on-demand masking."""
+"""Hermes plugin: /masquer, auto filter plus on-demand masking."""
 
 from __future__ import annotations
 
@@ -17,13 +17,13 @@ _NOTICE = (
     "are restored before tools run."
 )
 _HELP = (
-    "/masquer status  — état du mode auto\n"
-    "/masquer on  — active le mode auto\n"
-    "/masquer off  — coupe le mode auto\n"
-    "/masquer ajouter Marie Dupont  — ajoute un nom à masquer\n"
-    "/masquer retirer Marie Dupont  — l'enlève\n"
-    "/masquer liste  — montre les noms ajoutés\n"
-    "/masquer …  — masque un texte collé, ou un fichier"
+    "/masquer status  : état du mode auto\n"
+    "/masquer on  : active le mode auto\n"
+    "/masquer off  : coupe le mode auto\n"
+    "/masquer ajouter Marie Dupont  : ajoute un nom à masquer\n"
+    "/masquer retirer Marie Dupont  : l'enlève\n"
+    "/masquer liste  : montre les noms ajoutés\n"
+    "/masquer ...  : masque un texte collé, ou un fichier"
 )
 _CHAT_LIMIT = 1500
 _MAX_FILE = 5_000_000
