@@ -133,3 +133,25 @@ def test_named_term_and_never_david(tmp_path):
     assert "Marie Dupont" not in masked
     assert "David" in masked
     assert "[NOM_1]" in masked
+
+
+def test_tool_call_arguments_stay_valid_json(table):
+    import json
+
+    command = "x = 1\n\x40pytest.fixture\ndef t(): pass\nmail jean\x40example.com"
+    request = {
+        "messages": [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {"function": {"name": "terminal", "arguments": json.dumps({"command": command})}}
+                ],
+            }
+        ]
+    }
+    masked = masker.mask_value(request, table)
+    raw = masked["messages"][0]["tool_calls"][0]["function"]["arguments"]
+    decoded = json.loads(raw)
+    assert "\n\x40pytest.fixture" in decoded["command"]
+    assert "jean\x40example.com" not in decoded["command"]
+    assert masker.unmask_value(decoded, table)["command"] == command

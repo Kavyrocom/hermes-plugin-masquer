@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import threading
 from pathlib import Path
@@ -261,8 +262,23 @@ def mask_value(value: Any, table: PiiMap) -> Any:
     if isinstance(value, list):
         return [mask_value(item, table) for item in value]
     if isinstance(value, dict):
-        return {key: mask_value(item, table) for key, item in value.items()}
+        return {
+            key: _mask_arguments(item, table) if key == "arguments" and isinstance(item, str)
+            else mask_value(item, table)
+            for key, item in value.items()
+        }
     return value
+
+
+def _mask_arguments(raw: str, table: PiiMap) -> str:
+    """Tool-call arguments are a JSON string: mask the decoded values, never the
+    raw text, or a regex hit on an escape such as the n of \\n can leave a lone
+    backslash and make the provider reject the call as invalid JSON."""
+    try:
+        decoded = json.loads(raw)
+    except (TypeError, ValueError):
+        return table.mask_text(raw)
+    return json.dumps(mask_value(decoded, table), ensure_ascii=False)
 
 
 def unmask_value(value: Any, table: PiiMap) -> Any:
