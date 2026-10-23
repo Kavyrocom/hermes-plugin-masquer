@@ -8,6 +8,9 @@ sys.path.insert(0, str(ROOT))
 
 import masker  # noqa: E402
 
+AT = chr(64)
+MAIL = "jean" + AT + "example.com"
+
 
 @pytest.fixture
 def table():
@@ -78,10 +81,12 @@ def test_llm_request_masks_messages(table):
 
 
 def test_status_does_not_leak_values(table):
-    table.mask_text("secret@kavyro.com")
+    masker._maps.clear()
+    masker._maps["s1"] = table
+    table.mask_text("jean" + AT + "example.com")
     text = masker.status_text()
-    assert "secret@kavyro.com" not in text
-    assert "email" in text
+    assert "jean" not in text
+    assert "1 email" in text
 
 
 def test_on_demand_works_when_auto_off(table):
@@ -155,3 +160,93 @@ def test_tool_call_arguments_stay_valid_json(table):
     assert "\n\x40pytest.fixture" in decoded["command"]
     assert "jean\x40example.com" not in decoded["command"]
     assert masker.unmask_value(decoded, table)["command"] == command
+
+
+def test_long_text_is_masked_not_skipped(table):
+    filler = "ligne neutre sans donnée\n" * 100_000
+    text = filler + "contact " + MAIL + "\n" + filler
+    assert len(text) > 2 * masker._CHUNK
+    masked = table.mask_text(text)
+    assert MAIL not in masked
+    assert table.unmask_text(masked) == text
+
+
+def test_email_regex_is_linear(table):
+    import time
+
+    start = time.time()
+    table.mask_text("a-" * 40_000)
+    assert time.time() - start < 1.0
+
+
+def test_email_after_punctuation_still_found(table):
+    for text in ("(" + MAIL + ")", "mailto:" + MAIL, "x-" + MAIL):
+        assert MAIL not in table.mask_text(text)
+
+
+def test_term_matches_whole_words_only(tmp_path):
+    store = masker.TermStore(tmp_path / "termes.txt")
+    store.add("Ana")
+    masker._terms = store
+    try:
+        table = masker.PiiMap()
+        masked = table.mask_text("Ana a fait une banane et une analyse")
+        assert masked.startswith("[NOM_1] a fait")
+        assert "banane" in masked and "analyse" in masked
+    finally:
+        masker._terms = masker.TermStore()
+
+
+def test_literal_placeholder_in_text_is_not_restored_as_private(table):
+    table.mask_text(MAIL)
+    text = "le doc cite marie.dupont@exemple.fr comme exemple"
+    masked = table.mask_text(text)
+    assert masked != text
+    assert table.unmask_text(masked) == text
+    assert MAIL not in table.unmask_text(masked)
+
+
+@pytest.mark.parametrize(
+    "secret",
+    [
+        "ghp_" + "a" * 36,
+        "gho_" + "a" * 36,
+        "sk_live_" + "a" * 24,
+        "xoxb-1234567890-abcdefghij",
+        "AIza" + "B" * 35,
+        "sk-ant-api03-" + "a" * 30,
+        "eyJ" + "a" * 20 + ".eyJ" + "b" * 20 + "." + "c" * 20,
+    ],
+)
+def test_api_key_variants(table, secret):
+    masked = table.mask_text("clé " + secret + " fin")
+    assert secret not in masked
+    assert "[API_KEY_1]" in masked
+    assert table.unmask_text(masked) == "clé " + secret + " fin"
+
+
+def test_request_walks_system_tools_and_prompt():
+    masker._maps.clear()
+    request = {
+        "model": "m",
+        "system": "profil " + MAIL,
+        "tools": [{"description": "mail " + MAIL}],
+        "prompt": MAIL,
+        "messages": [],
+    }
+    updated = masker.mask_llm_request(request, "s1")
+    assert MAIL not in str(updated)
+    assert updated["model"] == "m"
+
+
+def test_unchanged_request_returns_same_object():
+    masker._maps.clear()
+    request = {"messages": [{"role": "user", "content": "bonjour"}]}
+    assert masker.mask_llm_request(request, "s1") is request
+
+
+def test_status_counts_every_session():
+    masker._maps.clear()
+    masker.mask_llm_request({"messages": [{"role": "user", "content": MAIL}]}, "sess-A")
+    assert "1 email" in masker.status_text()
+    assert "1 email" in masker.status_text("sess-A")

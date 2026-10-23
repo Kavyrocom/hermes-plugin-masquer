@@ -12,7 +12,7 @@ from hermes_constants import get_hermes_home
 from . import masker
 
 _NOTICE = (
-    "Privacy: bracket tokens EMAIL, PHONE, IBAN, ADDRESS, NOM plus a number "
+    "Privacy: bracket tokens EMAIL, PHONE, IBAN, API_KEY, ADDRESS, NOM plus a number "
     "are placeholders for private values. Use them verbatim in tool calls; they "
     "are restored before tools run."
 )

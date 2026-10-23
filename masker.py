@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 _PATTERNS: List[Tuple[str, re.Pattern[str]]] = [
     (
         "EMAIL",
-        re.compile(r"\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b"),
+        re.compile(r"(?<![a-zA-Z0-9._%+\-])[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b"),
     ),
     (
         "IBAN",
@@ -28,8 +28,12 @@ _PATTERNS: List[Tuple[str, re.Pattern[str]]] = [
         "API_KEY",
         re.compile(
             r"\b(?:sk-ant-[a-zA-Z0-9_\-]{20,}|sk-[a-zA-Z0-9_\-]{20,}"
-            r"|ghp_[a-zA-Z0-9]{36,}|github_pat_[a-zA-Z0-9_]{20,}"
-            r"|AKIA[A-Z0-9]{16})\b"
+            r"|gh[pousr]_[a-zA-Z0-9]{36,}|github_pat_[a-zA-Z0-9_]{20,}"
+            r"|[sr]k_(?:live|test)_[a-zA-Z0-9]{16,}"
+            r"|xox[abprs]-[a-zA-Z0-9\-]{10,}"
+            r"|AIza[a-zA-Z0-9_\-]{35}"
+            r"|eyJ[a-zA-Z0-9_\-]{8,}\.eyJ[a-zA-Z0-9_\-]{8,}\.[a-zA-Z0-9_\-]{8,}"
+            r"|AKIA[A-Z0-9]{16})(?![a-zA-Z0-9_\-])"
         ),
     ),
     (
@@ -52,8 +56,11 @@ _PATTERNS: List[Tuple[str, re.Pattern[str]]] = [
 ]
 
 _PLACEHOLDER_RE = re.compile(r"\[(EMAIL|IBAN|PHONE|API_KEY|ADDRESS|NOM)_(\d+)\]")
-_MAX_CHARS = 2_000_000
-_WALK_KEYS = ("messages", "input", "instructions")
+_CHUNK = 500_000
+_WALK_KEYS = (
+    "messages", "input", "instructions", "system", "tools", "prompt",
+    "contents", "system_instruction", "systemInstruction",
+)
 _NEVER = frozenset({
     "david", "kavyro", "dante", "hermes", "octavia", "simaris", "ember",
     "aura", "lavos", "khora", "discord", "telegram", "whatsapp", "paris",
@@ -135,6 +142,31 @@ def terms() -> TermStore:
     return _terms
 
 
+def _chunks(text: str) -> List[str]:
+    """Cut a long text at newlines (else spaces) so no value is skipped."""
+    out: List[str] = []
+    start, size = 0, len(text)
+    while start < size:
+        end = min(start + _CHUNK, size)
+        if end < size:
+            floor = start + _CHUNK // 2
+            cut = text.rfind("\n", floor, end)
+            if cut < 0:
+                cut = text.rfind(" ", floor, end)
+            if cut >= 0:
+                end = cut + 1
+        out.append(text[start:end])
+        start = end
+    return out
+
+
+def _term_regex(term: str) -> "re.Pattern[str]":
+    """Whole-word match: 'Ana' must not hit 'banane'."""
+    left = r"(?<!\w)" if re.match(r"\w", term[0]) else ""
+    right = r"(?!\w)" if re.match(r"\w", term[-1]) else ""
+    return re.compile(left + re.escape(term) + right, re.IGNORECASE)
+
+
 class PiiMap:
     """One mapping table (typically one session)."""
 
@@ -153,40 +185,49 @@ class PiiMap:
         return out
 
     def mask_text(self, text: str) -> str:
-        if not text or len(text) > _MAX_CHARS:
+        if not text:
             return text
         with self._lock:
-            matches: List[Tuple[int, int, str, str]] = []
-            for kind, rx in _PATTERNS:
-                for m in rx.finditer(text):
-                    value = m.group(0).strip()
-                    if len(value) < 5 and kind == "ADDRESS":
-                        continue
-                    matches.append((m.start(), m.end(), kind, m.group(0)))
-            extra = sorted(_terms.terms, key=len, reverse=True)
-            for term in extra:
-                if term.lower() in _NEVER:
+            if len(text) <= _CHUNK:
+                return self._mask_chunk(text)
+            return "".join(self._mask_chunk(part) for part in _chunks(text))
+
+    def _mask_chunk(self, text: str) -> str:
+        matches: List[Tuple[int, int, str, str]] = []
+        for kind, rx in _PATTERNS:
+            for m in rx.finditer(text):
+                value = m.group(0).strip()
+                if len(value) < 5 and kind == "ADDRESS":
                     continue
-                for m in re.finditer(re.escape(term), text, flags=re.IGNORECASE):
-                    matches.append((m.start(), m.end(), "NOM", m.group(0)))
-            if not matches:
-                return text
-            matches.sort(key=lambda item: (item[0], -(item[1] - item[0])))
-            kept: List[Tuple[int, int, str, str]] = []
-            last_end = -1
-            for start, end, kind, value in matches:
-                if start < last_end:
-                    continue
-                kept.append((start, end, kind, value))
-                last_end = end
-            pieces: List[str] = []
-            cursor = 0
-            for start, end, kind, value in kept:
-                pieces.append(text[cursor:start])
-                pieces.append(self._placeholder_for(kind, value))
-                cursor = end
-            pieces.append(text[cursor:])
-            return "".join(pieces)
+                matches.append((m.start(), m.end(), kind, m.group(0)))
+        # A real text that already contains a token such as the first email placeholder
+        # must not be restored as a private value later: give it its own placeholder.
+        for m in _PLACEHOLDER_RE.finditer(text):
+            matches.append((m.start(), m.end(), m.group(1), m.group(0)))
+        extra = sorted(_terms.terms, key=len, reverse=True)
+        for term in extra:
+            if term.lower() in _NEVER:
+                continue
+            for m in _term_regex(term).finditer(text):
+                matches.append((m.start(), m.end(), "NOM", m.group(0)))
+        if not matches:
+            return text
+        matches.sort(key=lambda item: (item[0], -(item[1] - item[0])))
+        kept: List[Tuple[int, int, str, str]] = []
+        last_end = -1
+        for start, end, kind, value in matches:
+            if start < last_end:
+                continue
+            kept.append((start, end, kind, value))
+            last_end = end
+        pieces: List[str] = []
+        cursor = 0
+        for start, end, kind, value in kept:
+            pieces.append(text[cursor:start])
+            pieces.append(self._placeholder_for(kind, value))
+            cursor = end
+        pieces.append(text[cursor:])
+        return "".join(pieces)
 
     def unmask_text(self, text: str) -> str:
         if not text or "[" not in text:
@@ -238,11 +279,26 @@ def is_global_enabled() -> bool:
     return _global_enabled
 
 
+def _all_counts() -> Dict[str, int]:
+    totals: Dict[str, int] = {}
+    with _maps_lock:
+        tables = list(_maps.values())
+    for table in tables:
+        for kind, n in table.counts().items():
+            totals[kind] = totals.get(kind, 0) + n
+    return totals
+
+
 def status_text(session_id: str = "") -> str:
-    table = get_map(session_id)
-    auto = "allumé" if table.enabled else "éteint"
+    """The slash command has no session id: with none, count every session."""
+    if session_id:
+        table = get_map(session_id)
+        auto = "allumé" if table.enabled else "éteint"
+        counts = table.counts()
+    else:
+        auto = "allumé" if _global_enabled else "éteint"
+        counts = _all_counts()
     extra = len(_terms.terms)
-    counts = table.counts()
     extra_bit = f" Liste perso : {extra} nom{'s' if extra != 1 else ''}." if extra else " Liste perso vide."
     if not counts:
         return f"Mode auto {auto}.{extra_bit} Rien de masqué pour l'instant."
@@ -299,4 +355,4 @@ def mask_llm_request(request: Dict[str, Any], session_id: str = "") -> Dict[str,
     for key in _WALK_KEYS:
         if key in updated:
             updated[key] = mask_value(updated[key], table)
-    return updated
+    return request if updated == request else updated
