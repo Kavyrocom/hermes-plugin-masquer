@@ -53,6 +53,7 @@ _PATTERNS: List[Tuple[str, re.Pattern[str]]] = [
         "ADDRESS",
         re.compile(
             r"\b(?:0[1-9]|[1-8]\d|9[0-5]|97[1-6]|98[0-9])\d{3}\s+"
+            r"(?!(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b)"
             r"[A-ZÀ-Ÿ][A-Za-zÀ-ÿ'\-]+(?:[\s\-][A-ZÀ-Ÿ][A-Za-zÀ-ÿ'\-]+)?\b"
         ),
     ),

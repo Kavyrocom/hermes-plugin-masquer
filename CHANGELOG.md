@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.4
+
+- Correctif : un identifiant de processus de 5 chiffres suivi d'un jour ou d'un mois abrégé (`Sat`, `Oct`...) n'est plus pris pour un code postal et une ville.
+
 ## 0.2.3
 
 - Correctif : un nom d'unité systemd (`getty@tty1.service`, `.timer`, `.socket`...) n'est plus pris pour un email et masqué.
