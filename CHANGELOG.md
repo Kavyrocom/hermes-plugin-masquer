@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.3
+
+- Correctif : un nom d'unité systemd (`getty@tty1.service`, `.timer`, `.socket`...) n'est plus pris pour un email et masqué.
+
 ## 0.2.2
 
 - Correctif : un texte de plus de 2 millions de caractères n'est plus renvoyé en clair. Il est découpé en morceaux de 500 000 caractères et masqué.
