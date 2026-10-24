@@ -264,3 +264,18 @@ def test_real_email_still_masked_next_to_unit_name(table):
     assert MAIL not in masked
     assert "getty" + AT + "tty1.service" in masked
     assert table.unmask_text(masked) == text
+
+
+def test_process_listing_is_not_an_address(table):
+    for pid in ("1378" + "5", "2749" + "1", "6944" + "0"):
+        for rest in ("Sat Oct 24 09:58:31 2026", "Wed Oct 21 13:17:50 2026", "Oct 24 2026"):
+            text = pid + " " + rest
+            assert table.mask_text(text) == text
+
+
+def test_postal_code_and_city_still_masked(table):
+    for code, city in (("7500" + "1", "Paris"), ("6900" + "3", "Lyon"), ("8900" + "0", "Sens"), ("3800" + "0", "Saint-Etienne")):
+        text = "Livraison " + code + " " + city
+        masked = table.mask_text(text)
+        assert code not in masked
+        assert table.unmask_text(masked) == text
