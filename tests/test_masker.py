@@ -115,11 +115,9 @@ def test_french_address(table):
     assert table.unmask_text(masked) == text
 
 
-def test_postal_code_city(table):
+def test_postal_code_city_not_masked_without_street(table):
     text = "Envoyer à 69003 Lyon demain."
-    masked = table.mask_text(text)
-    assert "69003 Lyon" not in masked
-    assert "[ADDRESS_1]" in masked
+    assert table.mask_text(text) == text
 
 
 def test_bare_paris_not_address(table):
@@ -273,9 +271,138 @@ def test_process_listing_is_not_an_address(table):
             assert table.mask_text(text) == text
 
 
-def test_postal_code_and_city_still_masked(table):
-    for code, city in (("7500" + "1", "Paris"), ("6900" + "3", "Lyon"), ("8900" + "0", "Sens"), ("3800" + "0", "Saint-Etienne")):
-        text = "Livraison " + code + " " + city
+def test_street_with_comma_is_masked(table):
+    text = "Il habite 12, rue de la Paix."
+    masked = table.mask_text(text)
+    assert "rue de la Paix" not in masked
+    assert table.unmask_text(masked) == text
+
+
+def test_curly_apostrophe_street_is_masked(table):
+    text = "Devant 3 rue de l\u2019\u00c9glise."
+    masked = table.mask_text(text)
+    assert "glise" not in masked
+    assert table.unmask_text(masked) == text
+
+
+def test_tool_output_street_shape_not_masked(table):
+    for text in ("12 square meters of space", "12 route show default", "12 chemin de fer"):
+        assert table.mask_text(text) == text
+
+
+def test_known_placeholder_is_not_rewrapped(table):
+    masked = table.mask_text(MAIL)
+    token = masker._PLACEHOLDER_RE.search(masked).group(0)
+    followup = "le modele ecrit " + token + " seul"
+    assert table.mask_text(followup) == followup
+
+
+def test_mask_text_is_idempotent(table):
+    once = table.mask_text("contact " + MAIL + " et +33 6 12 34 56 78")
+    assert table.mask_text(once) == once
+
+
+def test_model_tool_args_keep_their_token(table):
+    import json as _json
+
+    masked = table.mask_text(MAIL)
+    token = masker._PLACEHOLDER_RE.search(masked).group(0)
+    request = {"messages": [
+        {"role": "assistant", "tool_calls": [
+            {"function": {"name": "send", "arguments": _json.dumps({"to": token})}}]}]}
+    updated = masker.mask_value(request, table)
+    seen = _json.loads(updated["messages"][0]["tool_calls"][0]["function"]["arguments"])["to"]
+    assert seen == token
+
+
+def test_signed_thinking_block_is_untouched(table):
+    block = {"type": "thinking", "thinking": "reponse a " + MAIL, "signature": "EqQBCkYIBxgC"}
+    out = masker.mask_value([block], table)
+    assert out[0] is block
+
+
+def test_generic_iban_countries(table):
+    for iban in ("BE68 5390 0754 7034", "DE89 3704 0044 0532013000", "CH93 0076 2011 6238 5295 7", "GB29 NWBK 6016 1331 9268 19", "LU28 0019 4006 4475 0000"):
+        text = "IBAN " + iban + " svp"
         masked = table.mask_text(text)
-        assert code not in masked
+        assert iban not in masked
         assert table.unmask_text(masked) == text
+
+
+def test_invalid_iban_is_not_masked(table):
+    for fake in ("BE68 5390 0754 7035", "XX00 1234 5678 9012"):
+        assert table.mask_text("IBAN " + fake) == "IBAN " + fake
+
+
+def test_credit_card_masked_with_luhn(table):
+    text = "carte 4242 4242 4242 4242 fin"
+    masked = table.mask_text(text)
+    assert "4242" not in masked
+    assert table.unmask_text(masked) == text
+    assert table.mask_text("carte 1234 5678 9012 3456 fin") == "carte 1234 5678 9012 3456 fin"
+
+
+def test_international_phones(table):
+    for num in ("+1 415 555 0132", "+44 7911 123456", "+32 470 12 34 56", "+41 79 123 45 67", "+352 621 123 456"):
+        text = "appel " + num + " ok"
+        masked = table.mask_text(text)
+        assert num not in masked
+        assert table.unmask_text(masked) == text
+
+
+def test_date_after_country_code_is_not_a_phone(table):
+    assert table.mask_text("rendez-vous +33 2026-10-24 a Paris") == "rendez-vous +33 2026-10-24 a Paris"
+
+
+def test_french_phone_with_zero_parenthesis(table):
+    text = "numero +33 (0)6 12 34 56 78 et (+33) 6 12 34 56 78"
+    masked = table.mask_text(text)
+    assert "[PHONE_1]" in masked
+    assert table.unmask_text(masked) == text
+
+
+def test_new_secret_families(table):
+    secrets = [
+        "whsec_" + "a" * 24,
+        "ntn_" + "a" * 30,
+        "secret_" + "a" * 30,
+        "pat" + "A1" * 7 + "." + "ab12" * 16,
+        "123456789" + ":AA" + "Hx" * 17,
+        "MTA1" + "x" * 20 + "." + "Gabc12" + "." + "y" * 27,
+        "ya29." + "A1b2C3" * 8,
+        "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0B\n-----END PRIVATE KEY-----",
+    ]
+    for secret in secrets:
+        text = "cle " + secret + " fin"
+        masked = table.mask_text(text)
+        assert secret not in masked, secret[:12]
+        assert table.unmask_text(masked) == text
+
+
+def test_status_shows_version_and_self_test():
+    masker._maps.clear()
+    text = masker.status_text()
+    assert masker.VERSION in text
+    assert "Auto-test : " in text
+    assert "OK" in text
+
+
+def test_drop_map_forgets_session():
+    masker._maps.clear()
+    masker.mask_llm_request({"messages": [{"role": "user", "content": MAIL}]}, "sess-drop")
+    assert "1 email" in masker.status_text("sess-drop")
+    masker.drop_map("sess-drop")
+    assert "Rien de masqué" in masker.status_text("sess-drop")
+
+
+def test_code_emails_are_not_masked(table):
+    A = chr(64)
+    for text in ("logo" + A + "2x.png", "icon" + A + "3x.webp", "git" + A + "github.com:Kavyrocom/repo.git", "doc" + A + "example.test", "a" + A + "b.invalid", "x" + A + "y.localhost"):
+        assert table.mask_text("fichier " + text + " ok") == "fichier " + text + " ok"
+
+
+def test_real_email_with_common_tld_still_masked(table):
+    A = chr(64)
+    for text in ("jean" + A + "exemple.fr", "jean" + A + "exemple.com", "jean" + A + "exemple.co.uk", "jean" + A + "exemple.mu"):
+        masked = table.mask_text("contact " + text)
+        assert text not in masked

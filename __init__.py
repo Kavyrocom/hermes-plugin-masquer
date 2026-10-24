@@ -18,6 +18,7 @@ _NOTICE = (
 )
 _HELP = (
     "/masquer status  : état du mode auto\n"
+    "/masquer test  : contrôle du masquage sur fausses données\n"
     "/masquer on  : active le mode auto\n"
     "/masquer off  : coupe le mode auto\n"
     "/masquer ajouter Marie Dupont  : ajoute un nom à masquer\n"
@@ -68,6 +69,14 @@ def _on_transform_llm_output(response_text: str = "", **kwargs: Any) -> Optional
     table = masker.get_map(_session_id(**kwargs))
     restored = table.unmask_text(response_text)
     return restored if restored != response_text else None
+
+
+def _drop_session_maps(**kwargs: Any) -> None:
+    """Forget every table a session-close event names; never raises."""
+    for key in ("session_id", "old_session_id", "new_session_id"):
+        sid = str(kwargs.get(key) or "")
+        if sid:
+            masker.drop_map(sid)
 
 
 def _looks_like_file(raw: str) -> Optional[Path]:
@@ -157,12 +166,17 @@ def _on_slash(raw_args: str) -> str:
     key = arg.lower()
     if key in {"", "status", "etat", "état"}:
         return masker.status_text()
+    if key == "test":
+        ok, total, failures = masker.self_test()
+        if ok == total:
+            return f"Auto-test {ok}/{total} OK (plugin {masker.VERSION}) : chaque famille est masquée puis restaurée avec de fausses données."
+        return f"Auto-test {ok}/{total} en échec : {', '.join(failures)}."
     if key in {"off"}:
         masker.set_global_enabled(False)
         return "Mode auto éteint. Les messages partent tels quels au modèle. /masquer … marche encore à la demande."
     if key in {"on"}:
         masker.set_global_enabled(True)
-        return "Mode auto allumé. Emails, téléphones, IBAN, adresses FR, clés, et les noms de ta liste."
+        return "Mode auto allumé. Emails, téléphones, IBAN, adresses claires, cartes, clés, et les noms de ta liste."
     if key in {"help", "aide"}:
         return _HELP
     if key in {"liste", "list"}:
@@ -181,11 +195,13 @@ def register(ctx) -> None:
     ctx.register_middleware("llm_request", _on_llm_request)
     ctx.register_middleware("tool_request", _on_tool_request)
     ctx.register_hook("transform_llm_output", _on_transform_llm_output)
+    for hook in ("on_session_end", "on_session_finalize", "on_session_reset", "on_session_delete"):
+        ctx.register_hook(hook, _drop_session_maps)
     ctx.register_command(
         "masquer",
         handler=_on_slash,
-        description="Masquer des données perso : status, on, off, ajouter, liste, texte ou fichier.",
-        args_hint="[status|on|off|ajouter|liste|texte ou fichier]",
+        description="Masquer des données perso : status, test, on, off, ajouter, liste, texte ou fichier.",
+        args_hint="[status|test|on|off|ajouter|liste|texte ou fichier]",
         argument_mode="text",
     )
     ctx.register_system_prompt_section(
