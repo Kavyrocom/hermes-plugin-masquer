@@ -12,7 +12,10 @@ from typing import Any, Dict, List, Optional, Tuple
 _PATTERNS: List[Tuple[str, re.Pattern[str]]] = [
     (
         "EMAIL",
-        re.compile(r"(?<![a-zA-Z0-9._%+\-])[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b"),
+        re.compile(
+            r"(?<![a-zA-Z0-9._%+\-])[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\."
+            r"(?!(?:service|socket|timer|target|mount|path|slice|scope)\b)[a-zA-Z]{2,}\b"
+        ),
     ),
     (
         "IBAN",

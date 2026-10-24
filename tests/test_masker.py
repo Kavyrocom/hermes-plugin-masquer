@@ -250,3 +250,17 @@ def test_status_counts_every_session():
     masker.mask_llm_request({"messages": [{"role": "user", "content": MAIL}]}, "sess-A")
     assert "1 email" in masker.status_text()
     assert "1 email" in masker.status_text("sess-A")
+
+
+def test_systemd_unit_names_are_not_emails(table):
+    for unit in ("getty" + AT + "tty1.service", "hermes-gateway" + AT + "aura.service", "user" + AT + "1000.service", "x" + AT + "y.timer"):
+        text = "systemctl restart " + unit
+        assert table.mask_text(text) == text
+
+
+def test_real_email_still_masked_next_to_unit_name(table):
+    text = "systemctl restart getty" + AT + "tty1.service puis écrire à " + MAIL
+    masked = table.mask_text(text)
+    assert MAIL not in masked
+    assert "getty" + AT + "tty1.service" in masked
+    assert table.unmask_text(masked) == text
