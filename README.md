@@ -1,6 +1,6 @@
 # Masquer
 
-Plugin [Hermes Agent](https://hermes-agent.nousresearch.com). Il cache emails, téléphones français, IBAN, adresses claires et clés **avant** l'envoi au modèle.
+Plugin [Hermes Agent](https://hermes-agent.nousresearch.com). Il cache emails, téléphones, IBAN, cartes, adresses claires et clés **avant** l'envoi au modèle.
 
 Toi, tu continues à tout lire normalement. Les outils retrouvent les vraies valeurs pour travailler.
 
@@ -9,14 +9,17 @@ Ce n'est pas une conformité RGPD. C'est un filet.
 ## Ce qu'il cache tout seul
 
 - emails
-- téléphones français
-- IBAN
-- adresses du type `12 rue de la Paix` ou `69003 Lyon`
-- certaines clés API
+- téléphones français (`0X`, `+33`, `+33 (0)X`, `(+33)`) et internationaux (11 à 15 chiffres après `+` ou `00`)
+- IBAN, français ou étrangers, validés par la clé mod 97 (BE, DE, CH, GB, LU...)
+- cartes bancaires, validées par la clé de Luhn
+- adresses du type `12 rue de la Paix`, `3 bis avenue Foch`
+- clés API : OpenAI, Anthropic, OpenRouter, GitHub, Slack, AWS, Stripe (`sk_live` et `whsec`), Notion, Airtable, Telegram, Discord, Google, JWT, blocs de clé privée PEM
 
 ## Ce qu'il ne cache pas
 
 Un prénom tout seul. `David`, `Paris`, `Kavyro` restent visibles, sinon l'agent ne comprend plus de qui tu parles.
+
+Un code postal suivi d'un mot n'est plus masqué seul : ce format cachait trop de faux positifs (sorties d'outils, chiffres métier, dates). Une adresse se masque dans un format rue complet avec un nom.
 
 Pour un nom de client, tu l'ajoutes :
 
@@ -35,7 +38,7 @@ Installe le plugin Hermes Masquer depuis GitHub sur mon profil actuellement util
 
 Source : https://github.com/Kavyrocom/hermes-plugin-masquer
 
-Objectif : avant chaque envoi au modèle dans le cloud, masquer emails, téléphones français, IBAN, adresses françaises claires et clés. Je dois continuer à tout lire normalement. Les outils doivent retrouver les vraies valeurs. Ce n'est pas une conformité RGPD.
+Objectif : avant chaque envoi au modèle dans le cloud, masquer emails, téléphones, IBAN, cartes, adresses françaises claires et clés. Je dois continuer à tout lire normalement. Les outils doivent retrouver les vraies valeurs. Ce n'est pas une conformité RGPD.
 
 Avant toute modification
 1. Identifie le profil actif, la version Hermes, et si le plugin Masquer est déjà là.
@@ -64,7 +67,8 @@ Puis relance une session (ou la passerelle, si tu l'utilises) pour que la comman
 
 | Commande | Effet |
 |---|---|
-| `/masquer status` | État du mode auto |
+| `/masquer status` | État du mode auto, version, auto-test |
+| `/masquer test` | Contrôle du masquage sur fausses données |
 | `/masquer on` | Allume le filtre |
 | `/masquer off` | Coupe le filtre. Le masquage à la demande marche encore |
 | `/masquer ajouter Marie Dupont` | Ajoute un nom à masquer |
@@ -75,15 +79,18 @@ Puis relance une session (ou la passerelle, si tu l'utilises) pour que la comman
 
 ```
 /masquer status
-/masquer marie.dupont@exemple.fr
+/masquer test
 ```
 
-Le faux email doit ressortir masqué. `On se voit à Paris demain` ne doit pas bouger.
+L'auto-test doit afficher 9/9 OK. `On se voit à Paris demain` ne doit pas bouger.
 
 ## Limites
 
+- Le masquage couvre les requêtes de la boucle principale. Les appels auxiliaires d'Hermes (compression de contexte, titres de session, requêtes mémoire, vision) ne passent pas par les middlewares de plugin : leur contenu part tel quel au fournisseur.
+- Les dates de naissance, numéros de sécurité sociale, mots de passe d'application et adresses inversées (`Rue de la Paix 12`) ne sont pas masqués.
+- Les clés intégrées dans des URL (`?api_key=`), les variables d'environnement `.env` et les jetons `Bearer` génériques ne sont pas masqués : les distinguer d'un texte ordinaire est trop incertain.
 - Les noms et adresses vagues ne sont pas devinés.
-- Le mapping reste local à ta machine. Ne publie jamais un `/masquer status` qui collerait des vraies valeurs.
+- Le mapping reste local à ta machine, et la table d'une session est purgée à sa fin. Ne publie jamais un `/masquer status` qui collerait des vraies valeurs.
 - Un PDF se lit si l'outil de lecture PDF est disponible sur la machine. Sinon, passe par le texte ou le Markdown.
 
 ## Licence

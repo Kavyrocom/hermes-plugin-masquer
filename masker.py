@@ -6,15 +6,19 @@ import json
 import re
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+VERSION = "0.3.0"
 
 # Order: more specific first. No Discord snowflakes. No bare first names.
 _PATTERNS: List[Tuple[str, re.Pattern[str]]] = [
     (
         "EMAIL",
         re.compile(
-            r"(?<![a-zA-Z0-9._%+\-])[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\."
-            r"(?!(?:service|socket|timer|target|mount|path|slice|scope)\b)[a-zA-Z]{2,}\b"
+            r"(?<![a-zA-Z0-9._%+\-])(?!git@)[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\."
+            r"(?!(?:service|socket|timer|target|mount|path|slice|scope"
+            r"|png|jpg|jpeg|gif|svg|webp|ico|avif|pdf|zip|gz|tgz|bz2"
+            r"|js|ts|py|php|json|csv|test|invalid|example|localhost)\b)[a-zA-Z]{2,}\b"
         ),
     ),
     (
@@ -22,10 +26,23 @@ _PATTERNS: List[Tuple[str, re.Pattern[str]]] = [
         re.compile(r"\bFR\d{2}(?:\s?\d{4}){5}\s?\d{3}\b", re.IGNORECASE),
     ),
     (
+        # Generic IBAN: any country, kept only when the ISO 7064 mod-97 check passes.
+        "IBAN",
+        re.compile(r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,6}(?: ?[A-Z0-9]{1,4})?\b"),
+    ),
+    (
+        # French mobile/landline: 0X, +33/0033 X, +33 (0)X, (+33) X.
         "PHONE",
         re.compile(
-            r"(?<!\d)(?:(?:\+|00)33[\s.\-]*|0)[1-9](?:[\s.\-]*\d{2}){4}(?!\d)"
+            r"(?<![\w.])(?:\(?(?:\+|00)33\)?[\s.\-]*(?:\(0\)[\s.\-]*)?|0)"
+            r"[1-9](?:[\s.\-]*\d{2}){4}(?!\d)"
         ),
+    ),
+    (
+        # International: 10 to 15 digits after + or 00. A date like "+33 2026-10-24"
+        # only has 8 digits and never matches.
+        "PHONE",
+        re.compile(r"(?<![\w.])(?:\+|00)\d(?:[\s.\-]?\d){10,14}(?!\d)"),
     ),
     (
         "API_KEY",
@@ -33,33 +50,43 @@ _PATTERNS: List[Tuple[str, re.Pattern[str]]] = [
             r"\b(?:sk-ant-[a-zA-Z0-9_\-]{20,}|sk-[a-zA-Z0-9_\-]{20,}"
             r"|gh[pousr]_[a-zA-Z0-9]{36,}|github_pat_[a-zA-Z0-9_]{20,}"
             r"|[sr]k_(?:live|test)_[a-zA-Z0-9]{16,}"
-            r"|xox[abprs]-[a-zA-Z0-9\-]{10,}"
+            r"|whsec_[a-zA-Z0-9]{20,}"
+            r"|(?:secret|ntn)_[a-zA-Z0-9]{20,}"
+            r"|pat[A-Za-z0-9]{14}\.[A-Za-z0-9]{16,}"
+            r"|\d{8,10}:AA[A-Za-z0-9_\-]{30,}"
+            r"|[MN][A-Za-z0-9_\-]{20,26}\.[A-Za-z0-9_\-]{6}\.[A-Za-z0-9_\-]{25,45}"
+            r"|ya29\.[A-Za-z0-9_\-]{20,}"
             r"|AIza[a-zA-Z0-9_\-]{35}"
             r"|eyJ[a-zA-Z0-9_\-]{8,}\.eyJ[a-zA-Z0-9_\-]{8,}\.[a-zA-Z0-9_\-]{8,}"
+            r"|xox[abprs]-[a-zA-Z0-9\-]{10,}"
             r"|AKIA[A-Z0-9]{16})(?![a-zA-Z0-9_\-])"
         ),
     ),
     (
+        "API_KEY",
+        re.compile(
+            r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]{10,}?-----END [A-Z ]*PRIVATE KEY-----"
+        ),
+    ),
+    (
+        # French street address: "12 rue de la Paix", "3 bis avenue Foch".
         "ADDRESS",
         re.compile(
-            r"\b\d{1,4}(?:\s*(?:bis|ter|quater))?\s+"
+            r"\b\d{1,4}(?:\s*(?:bis|ter|quater))?\s*,?\s+"
             r"(?:rue|avenue|av\.|boulevard|bd|chemin|impasse|place|allée|allee|"
             r"cours|quai|route|rte|passage|square|villa)\s+"
-            r"[A-Za-zÀ-ÿ'\-]+(?:\s+[A-Za-zÀ-ÿ'\-]+){0,2}",
+            r"[A-Za-zÀ-ÿ'\u2019\-]+(?:\s+[A-Za-zÀ-ÿ'\u2019\-]+){0,2}",
             re.IGNORECASE,
         ),
     ),
     (
-        "ADDRESS",
-        re.compile(
-            r"\b(?:0[1-9]|[1-8]\d|9[0-5]|97[1-6]|98[0-9])\d{3}\s+"
-            r"(?!(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b)"
-            r"[A-ZÀ-Ÿ][A-Za-zÀ-ÿ'\-]+(?:[\s\-][A-ZÀ-Ÿ][A-Za-zÀ-ÿ'\-]+)?\b"
-        ),
+        # Credit card: grouped 4-digit blocks or 15-16 contiguous digits, Luhn-validated.
+        "CARD",
+        re.compile(r"\b(?:\d{4}[ \-]?){3}\d{1,4}(?!\d)|(?<!\d)\d{15,16}(?!\d)"),
     ),
 ]
 
-_PLACEHOLDER_RE = re.compile(r"\[(EMAIL|IBAN|PHONE|API_KEY|ADDRESS|NOM)_(\d+)\]")
+_PLACEHOLDER_RE = re.compile(r"\[(EMAIL|IBAN|PHONE|API_KEY|ADDRESS|NOM|CARD)_(\d+)\]")
 _CHUNK = 500_000
 _WALK_KEYS = (
     "messages", "input", "instructions", "system", "tools", "prompt",
@@ -76,7 +103,65 @@ _LABELS = {
     "IBAN": ("IBAN", "IBAN"),
     "API_KEY": ("clé", "clés"),
     "ADDRESS": ("adresse", "adresses"),
+    "CARD": ("carte", "cartes"),
     "NOM": ("nom", "noms"),
+}
+
+# Words that alone are not a street name; the validator wants a real name after them.
+_STREET_WORDS = re.compile(
+    r"^(?:rue|avenue|av\.|boulevard|bd|chemin|impasse|place|allée|allee|"
+    r"cours|quai|route|rte|passage|square|villa|bis|ter|quater|de|du|des|la|le|les|"
+    r"aux|d|l|dela)$",
+    re.IGNORECASE,
+)
+
+
+def _luhn_ok(digits: str) -> bool:
+    if not 13 <= len(digits) <= 19:
+        return False
+    total, double = 0, False
+    for ch in reversed(digits):
+        n = ord(ch) - 48
+        if double:
+            n *= 2
+            if n > 9:
+                n -= 9
+        total += n
+        double = not double
+    return total % 10 == 0
+
+
+def _iban_mod97_ok(value: str) -> bool:
+    compact = re.sub(r"\s", "", value).upper()
+    if len(compact) < 5 or len(compact) > 34 or not compact[:2].isalpha() or not compact[2:4].isdigit():
+        return False
+    rearranged = compact[4:] + compact[:4]
+    total = 0
+    for ch in rearranged:
+        if ch.isalpha():
+            total = total * 100 + (ord(ch) - 55)
+        elif ch.isdigit():
+            total = total * 10 + (ord(ch) - 48)
+        else:
+            return False
+    return total % 97 == 1
+
+
+def _address_has_name(value: str) -> bool:
+    """A street hit must carry a capitalized name: « rue de la Paix » yes,
+    « 5 route show default » (tool output) no."""
+    for word in value.split():
+        if _STREET_WORDS.match(word):
+            continue
+        if re.search(r"(?:^|['\u2019])[A-ZÀ-Ÿ]", word):
+            return True
+    return False
+
+
+_VALIDATORS: Dict[str, Callable[[str], bool]] = {
+    "IBAN": _iban_mod97_ok,
+    "CARD": lambda v: _luhn_ok(re.sub(r"\D", "", v)),
+    "ADDRESS": _address_has_name,
 }
 
 
@@ -201,12 +286,16 @@ class PiiMap:
         for kind, rx in _PATTERNS:
             for m in rx.finditer(text):
                 value = m.group(0).strip()
-                if len(value) < 5 and kind == "ADDRESS":
+                check = _VALIDATORS.get(kind)
+                if check is not None and not check(value):
                     continue
                 matches.append((m.start(), m.end(), kind, m.group(0)))
-        # A real text that already contains a token such as the first email placeholder
-        # must not be restored as a private value later: give it its own placeholder.
+        # A placeholder this table already emits stays untouched: the model reusing a
+        # token it was given (tool args, thinking) must read back the same token.
+        # A literal placeholder pasted from a document still gets its own mapping.
         for m in _PLACEHOLDER_RE.finditer(text):
+            if m.group(0) in self.placeholder_to_original:
+                continue
             matches.append((m.start(), m.end(), m.group(1), m.group(0)))
         extra = sorted(_terms.terms, key=len, reverse=True)
         for term in extra:
@@ -237,7 +326,7 @@ class PiiMap:
         if not text or "[" not in text:
             return text
         with self._lock:
-            def _repl(match: re.Match[str]) -> str:
+            def _repl(match: "re.Match[str]") -> str:
                 token = match.group(0)
                 return self.placeholder_to_original.get(token, token)
 
@@ -271,6 +360,14 @@ def get_map(session_id: str = "") -> PiiMap:
         return found
 
 
+def drop_map(session_id: str) -> None:
+    """Forget a session's table: called on session end/reset/delete so the
+    in-memory store of private values does not outlive the conversation."""
+    key = session_id or "_default"
+    with _maps_lock:
+        _maps.pop(key, None)
+
+
 def set_global_enabled(enabled: bool) -> None:
     global _global_enabled
     _global_enabled = enabled
@@ -293,6 +390,30 @@ def _all_counts() -> Dict[str, int]:
     return totals
 
 
+def self_test() -> Tuple[int, int, List[str]]:
+    """Mask-and-restore check on fake values; returns (ok, total, failures)."""
+    samples = [
+        ("email", "jean.dupont" + chr(64) + "exemple.fr"),
+        ("téléphone FR", "[PHONE_21]"),
+        ("téléphone +33 (0)", "+33 (0)6 12 34 56 78"),
+        ("téléphone intl", "+1 415 555 0132"),
+        ("IBAN FR", "[IBAN_4]"),
+        ("IBAN BE", "BE68 5390 0754 7034"),
+        ("carte bancaire", "4242 4242 4242 4242"),
+        ("clé API", "sk-ant-" + "a1B2" * 6),
+        ("adresse", "[ADDRESS_46]"),
+    ]
+    failures: List[str] = []
+    for label, sample in samples:
+        table = PiiMap()
+        masked = table.mask_text(sample)
+        if masked == sample:
+            failures.append(label + " non masqué")
+        elif table.unmask_text(masked) != sample:
+            failures.append(label + " ne revient pas en clair")
+    return len(samples) - len(failures), len(samples), failures
+
+
 def status_text(session_id: str = "") -> str:
     """The slash command has no session id: with none, count every session."""
     if session_id:
@@ -304,14 +425,20 @@ def status_text(session_id: str = "") -> str:
         counts = _all_counts()
     extra = len(_terms.terms)
     extra_bit = f" Liste perso : {extra} nom{'s' if extra != 1 else ''}." if extra else " Liste perso vide."
+    ok, total, failures = self_test()
+    test_bit = (
+        f" Auto-test : {ok}/{total} OK."
+        if ok == total
+        else f" Auto-test : {ok}/{total}, échec : {', '.join(failures[:3])}."
+    )
     if not counts:
-        return f"Mode auto {auto}.{extra_bit} Rien de masqué pour l'instant."
+        return f"Mode auto {auto} (plugin {VERSION}).{extra_bit}{test_bit} Rien de masqué pour l'instant."
     parts = []
     for kind, n in sorted(counts.items()):
         one, many = _LABELS.get(kind, (kind.lower(), kind.lower() + "s"))
         parts.append(f"{n} {many if n > 1 else one}")
     return (
-        f"Mode auto {auto}.{extra_bit} Masqué : {', '.join(parts)}. "
+        f"Mode auto {auto} (plugin {VERSION}).{extra_bit}{test_bit} Masqué : {', '.join(parts)}. "
         "Toi tu continues à tout lire normalement."
     )
 
@@ -322,6 +449,10 @@ def mask_value(value: Any, table: PiiMap) -> Any:
     if isinstance(value, list):
         return [mask_value(item, table) for item in value]
     if isinstance(value, dict):
+        # A signed thinking block is tied to its exact text: masking it would break
+        # the signature and the provider would reject the replayed turn with a 400.
+        if "signature" in value and ("thinking" in value or "reasoning" in value):
+            return value
         return {
             key: _mask_arguments(item, table) if key == "arguments" and isinstance(item, str)
             else mask_value(item, table)

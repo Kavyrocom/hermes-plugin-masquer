@@ -1,9 +1,13 @@
 name: masquer
-version: "0.2.4"
-description: "Commande /masquer : cache emails, téléphones, IBAN et adresses avant l'envoi au modèle."
+version: "0.3.0"
+description: "Commande /masquer : cache emails, téléphones, IBAN, cartes et adresses avant l'envoi au modèle."
 author: Kavyro
 provides_hooks:
   - transform_llm_output
+  - on_session_end
+  - on_session_finalize
+  - on_session_reset
+  - on_session_delete
 provides_middleware:
   - llm_request
   - tool_request

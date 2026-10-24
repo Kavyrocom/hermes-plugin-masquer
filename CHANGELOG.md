@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.0
+
+- Correctif : le motif « code postal + ville » est retiré. Il masquait des faux positifs (sorties d'outils, chiffres métier, dates). Une adresse ne se masque plus que dans un format rue complet avec un nom en majuscule.
+- Correctif : un jeton déjà connu de la session n'est plus re-numéroté. Le modèle qui réutilise un jeton dans un appel d'outil ou sa réflexion relit le même, et les outils reçoivent la vraie valeur.
+- Correctif : les blocs de réflexion signés ne sont plus touchés. La signature reste valide, le fournisseur ne rejette plus le tour rejoué.
+- Correctif : les numéros +33 (0)X et (+33) X sont masqués, et les dates précédées d'un indicatif ne sont plus prises pour des téléphones.
+- Ajout : numéros internationaux (11 à 15 chiffres après + ou 00).
+- Ajout : IBAN de tous pays, validés par la clé mod 97.
+- Ajout : cartes bancaires, validées par la clé de Luhn.
+- Ajout : clés Stripe whsec, Notion, Airtable, Telegram, Discord, Google ya29, blocs de clé privée PEM.
+- Ajout : /masquer status affiche la version et un auto-test ; /masquer test le détaille.
+- Ajout : la table d'une session est purgée à la fin de la session.
+
 ## 0.2.4
 
 - Correctif : un identifiant de processus de 5 chiffres suivi d'un jour ou d'un mois abrégé (`Sat`, `Oct`...) n'est plus pris pour un code postal et une ville.
