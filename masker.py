@@ -8,7 +8,7 @@ import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 
 # Order: more specific first. No Discord snowflakes. No bare first names.
 _PATTERNS: List[Tuple[str, re.Pattern[str]]] = [

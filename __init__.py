@@ -195,7 +195,7 @@ def register(ctx) -> None:
     ctx.register_middleware("llm_request", _on_llm_request)
     ctx.register_middleware("tool_request", _on_tool_request)
     ctx.register_hook("transform_llm_output", _on_transform_llm_output)
-    for hook in ("on_session_end", "on_session_finalize", "on_session_reset", "on_session_delete"):
+    for hook in ("on_session_end", "on_session_finalize", "on_session_reset"):
         ctx.register_hook(hook, _drop_session_maps)
     ctx.register_command(
         "masquer",
