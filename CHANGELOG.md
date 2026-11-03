@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1
+
+- Correctif : le hook `on_session_delete` n'existe pas dans Hermes. Il est retiré, ce qui supprime l'avertissement au démarrage. La purge de session reste assurée par `on_session_end`, `on_session_finalize` et `on_session_reset`.
+
 ## 0.3.0
 
 - Correctif : le motif « code postal + ville » est retiré. Il masquait des faux positifs (sorties d'outils, chiffres métier, dates). Une adresse ne se masque plus que dans un format rue complet avec un nom en majuscule.
