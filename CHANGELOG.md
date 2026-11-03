@@ -2,7 +2,7 @@
 
 ## 0.3.1
 
-- Correctif : le hook `on_session_delete` n'existe pas dans Hermes. Il est retiré, ce qui supprime l'avertissement au démarrage. La purge de session reste assurée par `on_session_end`, `on_session_finalize` et `on_session_reset`.
+- Correctif : le hook `on_session_delete` est inconnu de Hermes avant v0.22.3. Il est retiré, ce qui supprime l'avertissement au démarrage sur les versions 0.21.x. La purge de session reste assurée par `on_session_end`, `on_session_finalize` et `on_session_reset`. Sur Hermes v0.22.3 et plus, une suppression de session sans fin de tour préalable laisse la table en mémoire jusqu'à l'arrêt du processus (aucune écriture disque, rien envoyé au fournisseur).
 
 ## 0.3.0
 
