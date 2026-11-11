@@ -406,3 +406,43 @@ def test_real_email_with_common_tld_still_masked(table):
     for text in ("jean" + A + "exemple.fr", "jean" + A + "exemple.com", "jean" + A + "exemple.co.uk", "jean" + A + "exemple.mu"):
         masked = table.mask_text("contact " + text)
         assert text not in masked
+
+
+def test_millisecond_timestamp_not_a_card(table):
+    # 13 digits, Luhn-valid: was masked as a card before 0.3.2.
+    for stamp in ("1787562551" + "383", "17875625513" + "839"):
+        text = "ts=" + stamp + " fin"
+        assert table.mask_text(text) == text
+
+
+def test_card_15_and_16_digits_still_masked(table):
+    visa = "4111 1111 1111 " + "1111"
+    amex = "3782" + "8224631" + "0005"
+    for card in (visa, amex):
+        masked = table.mask_text("carte " + card + " fin")
+        assert card not in masked
+        assert "[CARD_" in masked
+        assert table.unmask_text(masked) == "carte " + card + " fin"
+
+
+def test_email_same_token_whatever_the_case(table):
+    low = "jean.dupont" + AT + "exemple.fr"
+    mixed = "Jean.Dupont" + AT + "Exemple.FR"
+    masked = table.mask_text(low + " puis " + mixed)
+    assert masked == "[EMAIL_1] puis [EMAIL_1]"
+    assert table.unmask_text(masked) == low + " puis " + low
+
+
+def test_decorator_after_json_newline_not_an_email(table):
+    text = "import pytest" + chr(92) + "n" + AT + "pytest.fixture" + chr(92) + "ndef table():"
+    assert table.mask_text(text) == text
+
+
+def test_email_after_json_newline_still_masked(table):
+    for esc in ("n", "r", "t"):
+        fresh = masker.PiiMap()
+        text = "contact:" + chr(92) + esc + MAIL + " fin"
+        masked = fresh.mask_text(text)
+        assert MAIL not in masked
+        assert masked == "contact:" + chr(92) + esc + "[EMAIL_1] fin"
+        assert fresh.unmask_text(masked) == text

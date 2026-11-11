@@ -8,14 +8,17 @@ import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-VERSION = "0.3.1"
+VERSION = "0.3.2"
 
 # Order: more specific first. No Discord snowflakes. No bare first names.
 _PATTERNS: List[Tuple[str, re.Pattern[str]]] = [
     (
         "EMAIL",
         re.compile(
-            r"(?<![a-zA-Z0-9._%+\-])(?!git@)[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\."
+            # Start after a JSON escape (\n, \r, \t) or at a clean boundary, never on
+            # the escape letter itself: "\n@decorator.name" in a serialized tool
+            # output is not an email.
+            r"(?:(?<=\\[nrt])|(?<![a-zA-Z0-9._%+\-\\]))(?!git@)[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\."
             r"(?!(?:service|socket|timer|target|mount|path|slice|scope"
             r"|png|jpg|jpeg|gif|svg|webp|ico|avif|pdf|zip|gz|tgz|bz2"
             r"|js|ts|py|php|json|csv|test|invalid|example|localhost)\b)[a-zA-Z]{2,}\b"
@@ -80,9 +83,11 @@ _PATTERNS: List[Tuple[str, re.Pattern[str]]] = [
         ),
     ),
     (
-        # Credit card: grouped 4-digit blocks or 15-16 contiguous digits, Luhn-validated.
+        # Credit card: 15 or 16 digits, grouped by 4 or contiguous, Luhn-validated.
+        # Shorter runs are left alone: a 13-digit millisecond timestamp passes
+        # Luhn one time in ten.
         "CARD",
-        re.compile(r"\b(?:\d{4}[ \-]?){3}\d{1,4}(?!\d)|(?<!\d)\d{15,16}(?!\d)"),
+        re.compile(r"\b(?:\d{4}[ \-]?){3}\d{3,4}(?!\d)|(?<!\d)\d{15,16}(?!\d)"),
     ),
 ]
 
@@ -117,7 +122,7 @@ _STREET_WORDS = re.compile(
 
 
 def _luhn_ok(digits: str) -> bool:
-    if not 13 <= len(digits) <= 19:
+    if not 15 <= len(digits) <= 16:
         return False
     total, double = 0, False
     for ch in reversed(digits):
@@ -333,13 +338,16 @@ class PiiMap:
             return _PLACEHOLDER_RE.sub(_repl, text)
 
     def _placeholder_for(self, kind: str, value: str) -> str:
-        existing = self.original_to_placeholder.get(value)
+        # An email is the same address whatever its case: one token, restored
+        # with the first spelling seen.
+        key = value.lower() if kind == "EMAIL" else value
+        existing = self.original_to_placeholder.get(key)
         if existing:
             return existing
         n = self._next_id.get(kind, 1)
         self._next_id[kind] = n + 1
         placeholder = f"[{kind}_{n}]"
-        self.original_to_placeholder[value] = placeholder
+        self.original_to_placeholder[key] = placeholder
         self.placeholder_to_original[placeholder] = value
         return placeholder
 

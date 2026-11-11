@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2
+
+- Correctif : un nombre de 13 ou 14 chiffres (horodatage en millisecondes, identifiant) n'est plus masqué comme une carte bancaire. Une carte se masque à 15 ou 16 chiffres, toujours validée par la clé de Luhn.
+- Correctif : un même email écrit avec une casse différente reçoit le même jeton. Il est restauré avec la première écriture vue.
+- Correctif : dans une sortie d'outil sérialisée, un retour à la ligne suivi d'un décorateur (`@pytest.fixture`) n'est plus pris pour un email. Un vrai email placé après un retour à la ligne reste masqué.
+
 ## 0.3.1
 
 - Correctif : le hook `on_session_delete` est inconnu de Hermes avant v0.22.3. Il est retiré, ce qui supprime l'avertissement au démarrage sur les versions 0.21.x. La purge de session reste assurée par `on_session_end`, `on_session_finalize` et `on_session_reset`. Sur Hermes v0.22.3 et plus, une suppression de session sans fin de tour préalable laisse la table en mémoire jusqu'à l'arrêt du processus (aucune écriture disque, rien envoyé au fournisseur).
