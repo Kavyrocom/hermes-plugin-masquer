@@ -1,0 +1,143 @@
+# Jeu de test public pour la détection des noms. Phrases et noms inventés.
+# Format : texte <TAB> noms attendus séparés par « ; » (vide = rien à masquer).
+# « \n » et « \t » dans le texte sont des sauts de ligne et tabulations.
+Bonjour, je suis Camille Lefebvre.	Camille Lefebvre
+J'ai eu Hugo Vasseur au téléphone ce matin.	Hugo Vasseur
+Relance Nadia Benali pour le devis.	Nadia Benali
+Ajoute Sophie Marchetti à la liste des invités.	Sophie Marchetti
+Le dossier de Julien Roussel est complet.	Julien Roussel
+Mme Fontaine a rappelé pour sa facture.	Fontaine
+Monsieur Delcourt demande un remboursement.	Delcourt
+M. Garnier sera absent jeudi.	Garnier
+Client : Thomas Perrin	Thomas Perrin
+Contact : Élodie Carpentier	Élodie Carpentier
+Nom : BERTHELOT Claire	BERTHELOT Claire
+Cordialement,\nAntoine Mercier	Antoine Mercier
+Rendez-vous avec Léa Fournier et Maxime Chevalier demain.	Léa Fournier;Maxime Chevalier
+Inès Haddad a payé sa commande hier.	Inès Haddad
+Peux-tu écrire à Jean-Baptiste Lemoine ?	Jean-Baptiste Lemoine
+Marie-Claire Dubreuil a annulé son abonnement.	Marie-Claire Dubreuil
+Le coach s'appelle Karim Bouzid.	Karim Bouzid
+De la part de Mathilde Aubert.	Mathilde Aubert
+Signé : Olivier Brunet	Olivier Brunet
+DUPONT Marie a validé le bon de commande.	DUPONT Marie
+Selon Pauline Girard, le budget est dépassé.	Pauline Girard
+C'est Romain Lacroix qui gère le compte.	Romain Lacroix
+Mon associé Nicolas Barbier reprend le dossier.	Nicolas Barbier
+Le rappel de Chloé Renard est prévu lundi.	Chloé Renard
+prenom\tnom\nLucie\tMoreau	Lucie;Moreau
+{"first_name": "Bastien", "last_name": "Colin"}	Bastien;Colin
+{"customer_name": "Amandine Leroy", "total": 120}	Amandine Leroy
+Yasmine El Amrani a réservé un appel.	Yasmine El Amrani
+Docteur Pierre Vidal vous recevra à 14h.	Pierre Vidal
+Maître Hélène Besson a envoyé le contrat.	Hélène Besson
+Hi, this is Emily Carter from support.	Emily Carter
+Please forward this to James Whitfield.	James Whitfield
+I spoke with Sarah Thompson yesterday.	Sarah Thompson
+Mr. Anderson will join the call.	Anderson
+Mrs. Hughes asked for a refund.	Hughes
+Best regards,\nMichael Brennan	Michael Brennan
+The invoice was paid by Olivia Bennett.	Olivia Bennett
+Customer: Daniel Murphy	Daniel Murphy
+Nick Pearson signed the contract.	Nick Pearson
+Bill Hargrove wants a demo next week.	Bill Hargrove
+Ask Rachel Foster about the renewal.	Rachel Foster
+My manager, Kevin O'Brien, approved it.	Kevin O'Brien
+Dr. Laura Mitchell reviewed the file.	Laura Mitchell
+{"name": "Jessica Coleman", "plan": "pro"}	Jessica Coleman
+Thanks, Andrew McAllister	Andrew McAllister
+Meeting with Priya Sharma at noon.	Priya Sharma
+Send the report to Carlos Mendoza.	Carlos Mendoza
+We hired Hannah Schmidt last month.	Hannah Schmidt
+From: Robert Langley	Robert Langley
+Call Megan Doyle back before five.	Megan Doyle
+La réunion Marketing Digital est décalée à jeudi.	
+Ouvre Google Chrome et connecte-toi.	
+Le Groupe Renault publie ses résultats.	
+On part à Saint Tropez en juillet.	
+Le plugin Fluent Forms est à jour.	
+Mets à jour Visual Studio Code.	
+La Tour Eiffel est fermée ce lundi.	
+Le Crédit Agricole a validé le prêt.	
+Voir la page Mentions Légales du site.	
+Le produit Pack Premium est en promotion.	
+Bonjour, merci pour ton retour rapide.	
+Le rapport Search Console montre une hausse.	
+La formation Agent Commercial démarre lundi.	
+Rendez-vous à Aix en Provence vendredi.	
+Le serveur Ubuntu Server redémarre cette nuit.	
+Le Conseil Régional finance le projet.	
+Avis Client publié sur la fiche.	
+Le modèle Claude Sonnet répond plus vite.	
+Nouvelle Aquitaine est notre première région.	
+Le compte Stripe Connect est vérifié.	
+Open the Google Sheets file.	
+The United States market is growing.	
+Deploy to Amazon Web Services tonight.	
+The Monthly Report is attached.	
+Use Docker Compose to start it.	
+New York office opens Monday.	
+The Project Manager role is open.	
+Black Friday sale starts tomorrow.	
+Check the Privacy Policy page.	
+The Marketing Team approved the copy.	
+Machine Learning models need data.	
+Visit the Help Center for details.	
+The General Terms apply to every order.	
+South Africa is the next market.	
+Run the Unit Tests before merging.	
+The Sales Pipeline looks healthy.	
+Microsoft Teams is down this morning.	
+Read the Getting Started guide.	
+The Golden Gate bridge is closed.	
+Happy New Year to the whole team.	
+Version Finale envoyée au client.	
+Le Black Friday approche.	
+Mise à jour du Plan Comptable.	
+Le Service Client répond sous 24h.	
+Page Contact refaite hier.	
+Le Mont Blanc est visible d'ici.	
+Projet Refonte Site validé.	
+Les Conditions Générales ont changé.	
+Tableau Excel partagé ce matin.	
+Le Tarif Réduit s'applique aux étudiants.	
+Tu peux rappeler Valérie Gauthier avant midi ?	Valérie Gauthier
+Le contrat de Fabien Roche est signé.	Fabien Roche
+Laurence Tessier m'a transféré le mail.	Laurence Tessier
+J'ai déjeuné avec Mehdi Khelifi hier.	Mehdi Khelifi
+Mme Picard souhaite changer de formule.	Picard
+Facture adressée à Guillaume Navarro.	Guillaume Navarro
+Notre comptable, Sandrine Poulain, valide lundi.	Sandrine Poulain
+Entretien avec Quentin Maillard à 10h.	Quentin Maillard
+Aurélie Jacquet et Damien Collet sont inscrits.	Aurélie Jacquet;Damien Collet
+email;prénom;nom\na@b.fr;Coralie;Texier	Coralie;Texier
+Bien à vous,\nStéphane Guillot	Stéphane Guillot
+PEREZ Lucas n'a pas encore répondu.	PEREZ Lucas
+Can you loop in Jennifer Walsh?	Jennifer Walsh
+Steve Harrington cancelled his plan.	Steve Harrington
+Ms. Collins left a voicemail.	Collins
+Patrick Sullivan is the new account owner.	Patrick Sullivan
+Reply from Amanda Reyes attached.	Amanda Reyes
+Tom Baker and Lucy Hale are on the thread.	Tom Baker;Lucy Hale
+"full_name": "Victoria Chambers"	Victoria Chambers
+Kind regards,\nGeorge Pemberton	George Pemberton
+Le Salon Auto ouvre samedi.	
+Offre Spéciale Rentrée valable un mois.	
+La Banque Postale a répondu.	
+Passe par Lyon Part Dieu.	
+Le Journal Officiel publie le décret.	
+Carte Bleue refusée au paiement.	
+Open the Admin Panel first.	
+The Quarterly Review is on Friday.	
+Las Vegas hosts the conference.	
+The Customer Success team replied.	
+Press the Start Button twice.	
+Our Free Trial lasts two weeks.	
+San Francisco is too expensive.	
+The Board Meeting was postponed.	
+Use Google Analytics for that.	
+La Poste livre demain.	
+Le Grand Prix démarre dimanche.	
+Rapport Annuel disponible en ligne.	
+The Blue Team won the exercise.	
+Los Angeles traffic is terrible.	

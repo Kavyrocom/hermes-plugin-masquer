@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.0
+
+- Nouveau : secrets reconnus à leur contexte. Jeton après `Bearer`, valeur d'un `?api_key=`, `&token=` ou `&password=` dans une URL, ligne `.env` dont le nom contient `KEY`, `TOKEN`, `SECRET` ou `PASSWORD`, champ entre guillemets `"password": "..."` ou `api_key = '...'`. Seule la valeur devient `[SECRET_n]`. Une variable (`${X}`), un gabarit (`<your-password>`), un appel de code (`os.environ[...]`) et un réglage chiffré (`MAX_TOKENS=4096`) ne sont pas touchés.
+- Nouveau : numéro de sécurité sociale français `[NIR_n]`, validé par sa clé, Corse comprise.
+- Nouveau : date de naissance `[NAISSANCE_n]`, seulement derrière un libellé explicite.
+- Nouveau : `/masquer importer contacts.csv` ajoute les noms complets d'un export de contacts à la liste personnelle. La liste se cherche maintenant par index : 3 000 noms ne ralentissent pas le masquage.
+- Noms : une colonne de tableau nommée `prénom`, `nom`, `last_name` ou `full_name` désigne des personnes (exports CSV et TSV).
+- Noms : après un prénom sûr ou une civilité, un nom de famille qui est aussi un mot ou un prénom est accepté (`Emily Carter`, `Mr. Anderson`).
+- Noms : un prénom rare qui est aussi un mot n'est plus retenu seul pour la suite de la session.
+- Nouveau : jeu de test public `tests/corpus/noms.tsv` (140 phrases inventées) et score vérifié en CI.
+- Correctif : un texte collé derrière `/masquer` passe par une table jetable. Avant, ses valeurs restaient en mémoire jusqu'à l'arrêt du processus.
+- Correctif : la description du plugin annonce aussi les clés, les secrets et les noms.
+- Licence du fichier des prénoms de l'Insee vérifiée (Licence Ouverte 2.0) et source citée.
+
 ## 0.4.0
 
 - Nouveau : détection automatique des noms de personnes, sans modèle et sans liste à fournir. Dictionnaire de prénoms et de mots courants embarqué (français, anglais, prénoms internationaux), champs structurés (`first_name`, `author`, `From:`), formules (`Bonjour X`, `M. X`, signatures) et mémoire de session. Jetons `[PRENOM_n]` et `[NOM_n]`, identiques pour une même personne pendant toute la session.
