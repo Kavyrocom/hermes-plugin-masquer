@@ -14,7 +14,7 @@ try:
 except ImportError:  # running the file outside the package (tests)
     import noms  # type: ignore
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 
 # Order: more specific first. No Discord snowflakes. No bare first names.
 _PATTERNS: List[Tuple[str, re.Pattern[str]]] = [
@@ -78,6 +78,61 @@ _PATTERNS: List[Tuple[str, re.Pattern[str]]] = [
         ),
     ),
     (
+        # « Authorization: Bearer <token> ». Only the token is replaced.
+        "SECRET",
+        re.compile(r"\b[Bb]earer[ \t]+(?P<v>[A-Za-z0-9._~+/\-]{20,}=*)"),
+    ),
+    (
+        # Secret carried by a URL: ?api_key=..., &token=..., &password=...
+        "SECRET",
+        re.compile(
+            r"[?&](?:api[_\-]?key|access[_\-]?token|auth[_\-]?token|token|secret|client[_\-]?secret"
+            r"|password|passwd|pwd|signature|sig|key)=(?P<v>[^&\s\"'<>#\\]{12,})",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        # .env line: STRIPE_SECRET_KEY=..., export DB_PASSWORD="...". The value must
+        # end the line, so « API_KEY = os.environ[...] » in code is left alone.
+        "SECRET",
+        re.compile(
+            r"(?:^|(?<=\\n)|(?<=\\r))[ \t]*(?:export[ \t]+)?"
+            r"(?P<k>[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PWD|CREDENTIALS?)[A-Z0-9_]*)"
+            r"[ \t]*=[ \t]*[\"']?(?P<v>[A-Za-z0-9_\-+/=.:~!@%^*]{8,})[\"']?[ \t]*(?=$|\r|\n|\\n|\\r)",
+            re.MULTILINE,
+        ),
+    ),
+    (
+        # Quoted secret in JSON, YAML or code: "password": "...", api_key = '...'.
+        "SECRET",
+        re.compile(
+            r"(?<![A-Za-z0-9])(?P<k>password|passwd|mot_de_passe|motdepasse|api[_\-]?key|apikey"
+            r"|secret[_\-]?key|client[_\-]?secret|access[_\-]?token|auth[_\-]?token|refresh[_\-]?token"
+            r"|private[_\-]?key)\\?[\"']?[ \t]*[:=][ \t]*\\?[\"'](?P<v>[^\"'\s\\]{8,})\\?[\"']",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        # French social security number (NIR), 13 digits + 2-digit key, key-validated.
+        "NIR",
+        re.compile(
+            r"(?<![\w.])[12][ .]?\d{2}[ .]?(?:0[1-9]|1[0-2]|[2-9]\d)[ .]?(?:\d{2}|2[ABab])"
+            r"[ .]?\d{3}[ .]?\d{3}[ .]?\d{2}(?![\w])"
+        ),
+    ),
+    (
+        # A date only when a label says it is a birth date.
+        "NAISSANCE",
+        re.compile(
+            r"(?:\bn[ée]e?[ \t]+le|\bdate[ \t]+de[ \t]+naissance|\bdate[ \t]+of[ \t]+birth|\bborn[ \t]+on"
+            r"|\bbirth[ _]?date|\bdate_naissance|\bdate_of_birth|\bbirthday|\bdob)"
+            r"\\?[\"']?[ \t]*[:=]?[ \t]*\\?[\"']?"
+            r"(?P<v>\d{1,2}[/.\-]\d{1,2}[/.\-]\d{2,4}|\d{4}-\d{2}-\d{2}"
+            r"|\d{1,2}(?:er)?[ \t]+[A-Za-zéûôÉ]{3,9}\.?[ \t]+\d{4})(?!\d)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         # French street address: "12 rue de la Paix", "3 bis avenue Foch".
         "ADDRESS",
         re.compile(
@@ -97,7 +152,9 @@ _PATTERNS: List[Tuple[str, re.Pattern[str]]] = [
     ),
 ]
 
-_PLACEHOLDER_RE = re.compile(r"\[(EMAIL|IBAN|PHONE|API_KEY|ADDRESS|PRENOM|NOM|CARD)_(\d+)\]")
+_PLACEHOLDER_RE = re.compile(
+    r"\[(EMAIL|IBAN|PHONE|API_KEY|SECRET|NIR|NAISSANCE|ADDRESS|PRENOM|NOM|CARD)_(\d+)\]"
+)
 _CHUNK = 500_000
 _WALK_KEYS = (
     "messages", "input", "instructions", "system", "tools", "prompt",
@@ -115,6 +172,9 @@ _LABELS = {
     "API_KEY": ("clé", "clés"),
     "ADDRESS": ("adresse", "adresses"),
     "CARD": ("carte", "cartes"),
+    "SECRET": ("secret", "secrets"),
+    "NIR": ("numéro de sécurité sociale", "numéros de sécurité sociale"),
+    "NAISSANCE": ("date de naissance", "dates de naissance"),
     "NOM": ("nom", "noms"),
     "PRENOM": ("prénom", "prénoms"),
 }
@@ -180,11 +240,80 @@ def _address_has_name(value: str) -> bool:
     return False
 
 
+def _nir_ok(value: str) -> bool:
+    compact = re.sub(r"[ .]", "", value).upper()
+    if len(compact) != 15:
+        return False
+    body = compact[:13].replace("2A", "19").replace("2B", "18")
+    if not body.isdigit() or not compact[13:].isdigit():
+        return False
+    return 97 - int(body) % 97 == int(compact[13:])
+
+
+_NOT_SECRET = re.compile(r"^(?:true|false|none|null|undefined|changeme|example|placeholder|redacted)$", re.IGNORECASE)
+
+
+def _secret_ok(value: str, key: str = "") -> bool:
+    """A real secret, not a variable, a template or a word of the documentation."""
+    if value[0] in "$<{%*" or len(set(value)) < 4 or _NOT_SECRET.match(value):
+        return False
+    if _PLACEHOLDER_RE.fullmatch(value) or "..." in value:
+        return False
+    if re.search(r"pass|pwd|mot", key, re.IGNORECASE):
+        # A password may be a plain word, but « settings.password » is code.
+        return not re.fullmatch(r"[A-Za-z_]+(?:\.[A-Za-z_]+)+", value)
+    return bool(re.search(r"\d", value)) and bool(re.search(r"[A-Za-z]", value))
+
+
 _VALIDATORS: Dict[str, Callable[[str], bool]] = {
+    "NIR": _nir_ok,
     "IBAN": _iban_mod97_ok,
     "CARD": lambda v: _luhn_ok(re.sub(r"\D", "", v)),
     "ADDRESS": _address_has_name,
 }
+
+
+_WORD_RE = re.compile(r"\w+")
+_MAX_TERMS = 5000
+_LIST_SHOWN = 40
+_FIRST_COLS = frozenset({"prenom", "first name", "firstname", "first_name", "given name", "given_name"})
+_LAST_COLS = frozenset({"nom", "nom de famille", "last name", "lastname", "last_name", "surname", "family name", "family_name"})
+_FULL_COLS = frozenset({"nom complet", "name", "full name", "fullname", "full_name", "contact", "display name", "display_name"})
+
+
+def contact_names(text: str) -> List[str]:
+    """Full names out of a contact export (CSV, any usual delimiter). Columns are
+    found by their header; a file with no header is read as one name per line."""
+    import csv
+    import io
+
+    sample = text[:4096]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+    except csv.Error:
+        dialect = csv.excel
+    rows = [row for row in csv.reader(io.StringIO(text), dialect) if any(cell.strip() for cell in row)]
+    if not rows:
+        return []
+    header = [noms.norm(cell.strip().strip("\ufeff")) for cell in rows[0]]
+    first = next((i for i, h in enumerate(header) if h in _FIRST_COLS), None)
+    last = next((i for i, h in enumerate(header) if h in _LAST_COLS), None)
+    full = next((i for i, h in enumerate(header) if h in _FULL_COLS), None)
+    out: List[str] = []
+
+    def cell(row: List[str], index: Optional[int]) -> str:
+        return row[index].strip() if index is not None and index < len(row) else ""
+
+    if first is not None and last is not None:
+        for row in rows[1:]:
+            if cell(row, first) and cell(row, last):
+                out.append(cell(row, first) + " " + cell(row, last))
+    elif full is not None or (first is None and last is not None and "nom" == header[last]):
+        index = full if full is not None else last
+        out = [cell(row, index) for row in rows[1:]]
+    elif len(header) == 1:
+        out = [row[0].strip() for row in rows]
+    return [name for name in out if re.fullmatch(r"[^\W\d_][^\d@<>{}\[\]|;=]{3,60}", name)]
 
 
 class TermStore:
@@ -194,6 +323,9 @@ class TermStore:
         self.path = path
         self._lock = threading.Lock()
         self.terms: List[str] = []
+        self._index: Dict[str, List[str]] = {}
+        self._odd: Optional["re.Pattern[str]"] = None
+        self._index_key: Optional[Tuple[str, ...]] = None
         if path:
             self.load()
 
@@ -234,11 +366,75 @@ class TermStore:
             self.save()
         return "Retiré de la liste."
 
+    def spans(self, text: str) -> List[Tuple[int, int]]:
+        """Where the listed names appear. Whole words, any case: « Ana » must not
+        hit « banane ». Indexed by first word, so a list of thousands stays fast."""
+        key = tuple(self.terms)
+        if key != self._index_key:
+            index: Dict[str, List[str]] = {}
+            odd = []
+            for term in sorted(key, key=len, reverse=True):
+                low = term.lower()
+                if low in _NEVER:
+                    continue
+                head = _WORD_RE.match(low)
+                if head is None or len(low) != len(term):
+                    odd.append(re.escape(term))
+                else:
+                    index.setdefault(head.group(0), []).append(low)
+            self._index = index
+            self._odd = re.compile("|".join(odd), re.IGNORECASE) if odd else None
+            self._index_key = key
+        out: List[Tuple[int, int]] = []
+        if self._index:
+            low_text = text.lower()
+            if len(low_text) == len(text):
+                size = len(text)
+                for m in _WORD_RE.finditer(low_text):
+                    for term in self._index.get(m.group(0), ()):
+                        end = m.start() + len(term)
+                        if low_text.startswith(term, m.start()) and (
+                            end >= size or not (text[end].isalnum() or text[end] == "_") or not term[-1].isalnum()
+                        ):
+                            out.append((m.start(), end))
+                            break
+            else:  # rare scripts whose lowercase changes length: plain search
+                for terms in self._index.values():
+                    for term in terms:
+                        out += [m.span() for m in re.finditer(r"(?<!\w)" + re.escape(term) + r"(?!\w)", text, re.IGNORECASE)]
+        if self._odd is not None:
+            out += [m.span() for m in self._odd.finditer(text)]
+        return out
+
+    def add_many(self, names: List[str]) -> Tuple[int, int]:
+        """Bulk add (contact import). Returns (added, skipped)."""
+        added = skipped = 0
+        with self._lock:
+            have = {t.lower() for t in self.terms}
+            for name in names:
+                clean = " ".join(name.split())
+                low = clean.lower()
+                if len(clean) < 5 or " " not in clean or low in have or low in _NEVER:
+                    skipped += 1
+                    continue
+                if len(self.terms) >= _MAX_TERMS:
+                    skipped += 1
+                    continue
+                self.terms.append(clean)
+                have.add(low)
+                added += 1
+            if added:
+                self.save()
+        return added, skipped
+
     def list_text(self) -> str:
         if not self.terms:
             return "Liste vide. Ajoute un nom avec /masquer ajouter Marie Dupont"
-        lines = "\n".join(f"- {t}" for t in self.terms)
-        return f"Noms et termes à masquer ({len(self.terms)}) :\n{lines}"
+        shown = self.terms[:_LIST_SHOWN]
+        lines = "\n".join(f"- {t}" for t in shown)
+        more = len(self.terms) - len(shown)
+        tail = f"\n… et {more} autres." if more > 0 else ""
+        return f"Noms et termes à masquer ({len(self.terms)}) :\n{lines}{tail}"
 
 
 _terms = TermStore()
@@ -335,11 +531,6 @@ def _chunks(text: str) -> List[str]:
     return out
 
 
-def _term_regex(term: str) -> "re.Pattern[str]":
-    """Whole-word match: 'Ana' must not hit 'banane'."""
-    left = r"(?<!\w)" if re.match(r"\w", term[0]) else ""
-    right = r"(?!\w)" if re.match(r"\w", term[-1]) else ""
-    return re.compile(left + re.escape(term) + right, re.IGNORECASE)
 
 
 class PiiMap:
@@ -392,7 +583,14 @@ class PiiMap:
             else:
                 matches.extend(detector.known_spans(text, self.known))
         for kind, rx in _PATTERNS:
+            groups = rx.groupindex
             for m in rx.finditer(text):
+                if "v" in groups:
+                    # Only the value is replaced; the label around it stays readable.
+                    if kind == "SECRET" and not _secret_ok(m.group("v"), m.group("k") if "k" in groups else ""):
+                        continue
+                    matches.append((m.start("v"), m.end("v"), kind, m.group("v")))
+                    continue
                 value = m.group(0).strip()
                 check = _VALIDATORS.get(kind)
                 if check is not None and not check(value):
@@ -405,12 +603,8 @@ class PiiMap:
             if m.group(0) in self.placeholder_to_original:
                 continue
             matches.append((m.start(), m.end(), m.group(1), m.group(0)))
-        extra = sorted(_terms.terms, key=len, reverse=True)
-        for term in extra:
-            if term.lower() in _NEVER:
-                continue
-            for m in _term_regex(term).finditer(text):
-                matches.append((m.start(), m.end(), "NOM", m.group(0)))
+        for start, end in _terms.spans(text):
+            matches.append((start, end, "NOM", text[start:end]))
         if not matches:
             return text
         matches.sort(key=lambda item: (item[0], -(item[1] - item[0])))
@@ -519,6 +713,12 @@ def self_test() -> Tuple[int, int, List[str]]:
         ("carte bancaire", "4242 4242 4242 4242"),
         ("clé API", "sk-ant-" + "a1B2" * 6),
         ("adresse", "[ADDRESS_46]"),
+    ]
+    samples += [
+        ("jeton Bearer", "Authorization: Bea" + "rer " + "a9F3" * 8),
+        ("secret .env", "STRIPE_SECRET" + "_KEY=" + "k7Qz" * 6),
+        ("numéro de sécurité sociale", "1 85 07 75 123 456 " + "08"),
+        ("date de naissance", "Née le 12/03/" + "1985"),
     ]
     if names_enabled():
         samples.append(("nom de personne", "Bonjour, je suis Camille Lefebvre."))

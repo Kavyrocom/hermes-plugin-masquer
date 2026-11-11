@@ -193,3 +193,23 @@ def test_settings_persist(tmp_path, monkeypatch):
     assert "mistral" in masker._excluded
     masker.set_names_enabled(True)
     assert not (tmp_path / "noms-off").exists()
+
+
+def test_table_columns_named_by_header():
+    table = masker.PiiMap()
+    text = "id;prénom;nom;ville\n1;Coralie;Texier;Lyon\n2;Bastien;Colin;Nantes\n\nTotal : 2"
+    masked = table.mask_text(text)
+    assert "Coralie" not in masked and "Texier" not in masked and "Colin" not in masked
+    assert "Lyon" in masked and "Total : 2" in masked
+    assert table.unmask_text(masked) == text
+
+
+def test_name_column_without_first_name_column_needs_a_first_name():
+    table = masker.PiiMap()
+    text = "nom;prix\nPack Premium;120\nCarnet Cuir;35"
+    assert table.mask_text(text) == text
+
+
+def test_surname_that_is_also_a_word_after_a_sure_first_name():
+    assert "Carter" not in masker.PiiMap().mask_text("Hi, this is Emily Carter from support.")
+    assert "Anderson" not in masker.PiiMap().mask_text("Mr. Anderson will join the call.")

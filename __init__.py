@@ -12,7 +12,7 @@ from hermes_constants import get_hermes_home
 from . import masker
 
 _NOTICE = (
-    "Privacy: bracket tokens EMAIL, PHONE, IBAN, API_KEY, ADDRESS, PRENOM, NOM plus a "
+    "Privacy: bracket tokens EMAIL, PHONE, IBAN, CARD, API_KEY, SECRET, NIR, NAISSANCE, ADDRESS, PRENOM, NOM plus a "
     "number are placeholders for private values (PRENOM = first name, NOM = family "
     "name; the same token is always the same person). Use them verbatim in tool "
     "calls; they are restored before tools run."
@@ -25,6 +25,7 @@ _HELP = (
     "/masquer ajouter Marie Dupont  : ajoute un nom à masquer\n"
     "/masquer retirer Marie Dupont  : l'enlève\n"
     "/masquer liste  : montre les noms ajoutés\n"
+    "/masquer importer contacts.csv  : ajoute les noms d'un export de contacts\n"
     "/masquer noms on|off  : détection automatique des noms de personnes\n"
     "/masquer exclure Mistral  : ce mot n'est jamais pris pour une personne\n"
     "/masquer ...  : masque un texte collé, ou un fichier"
@@ -136,8 +137,32 @@ def _spill_long_text(masked: str) -> Path:
     return dest
 
 
+def _import_contacts(raw: str) -> str:
+    path = _looks_like_file(raw)
+    if path is None:
+        return "Fichier introuvable. Donne le chemin d'un export CSV de tes contacts."
+    if path.stat().st_size > _MAX_FILE:
+        return "Fichier trop lourd (max 5 Mo)."
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError:
+        return "Je ne lis que les CSV en UTF-8."
+    names = masker.contact_names(text)
+    if not names:
+        return (
+            "Aucun nom trouvé. Il faut une colonne « prénom » et une colonne « nom », "
+            "ou une colonne « name », ou un nom complet par ligne."
+        )
+    added, skipped = masker.terms().add_many(names)
+    return (
+        f"{added} noms ajoutés à ta liste, {skipped} ignorés (déjà là, trop courts ou sans nom de famille). "
+        "Ils restent sur ta machine, dans pii-mask/termes.txt."
+    )
+
+
 def _anonymize(raw: str) -> str:
-    table = masker.get_map()
+    # A throwaway table: nothing typed here is kept in memory after the answer.
+    table = masker.PiiMap()
     path = _looks_like_file(raw)
     if path is not None:
         size = path.stat().st_size
@@ -179,7 +204,7 @@ def _on_slash(raw_args: str) -> str:
         return "Mode auto éteint. Les messages partent tels quels au modèle. /masquer … marche encore à la demande."
     if key in {"on"}:
         masker.set_global_enabled(True)
-        return "Mode auto allumé. Emails, téléphones, IBAN, adresses claires, cartes, clés, noms de personnes, et ta liste."
+        return "Mode auto allumé. Emails, téléphones, IBAN, adresses claires, cartes, clés et secrets, numéros de sécurité sociale, dates de naissance, noms de personnes, et ta liste."
     if key in {"noms on", "noms off"}:
         masker.set_names_enabled(key.endswith("on"))
         if key.endswith("on"):
@@ -193,6 +218,8 @@ def _on_slash(raw_args: str) -> str:
     head = first.lower()
     if head in {"ajouter", "add"} and rest.strip():
         return masker.terms().add(rest)
+    if head in {"importer", "import"} and rest.strip():
+        return _import_contacts(rest)
     if head in {"exclure", "exclude"} and rest.strip():
         return masker.exclude_name(rest)
     if head in {"retirer", "enlever", "remove"} and rest.strip():
@@ -210,8 +237,8 @@ def register(ctx) -> None:
     ctx.register_command(
         "masquer",
         handler=_on_slash,
-        description="Masquer des données perso : status, test, on, off, ajouter, liste, texte ou fichier.",
-        args_hint="[status|test|on|off|ajouter|liste|texte ou fichier]",
+        description="Masquer des données perso : status, test, on, off, ajouter, importer, liste, texte ou fichier.",
+        args_hint="[status|test|on|off|ajouter|importer|liste|texte ou fichier]",
         argument_mode="text",
     )
     ctx.register_system_prompt_section(

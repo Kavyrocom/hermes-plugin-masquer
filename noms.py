@@ -94,6 +94,26 @@ _ORG_BEFORE = re.compile(
     re.I,
 )
 
+# Table headers. « nom » or « name » alone is a person only next to a first-name
+# column; otherwise the cell must begin or end with a known first name.
+_COL_FIRST = frozenset({"prenom", "first name", "firstname", "given name", "givenname"})
+_COL_LAST = frozenset({"nom de famille", "last name", "lastname", "surname", "family name", "familyname"})
+_COL_NAME = frozenset({"nom", "name"})
+_COL_FULL = frozenset({"nom complet", "full name", "fullname", "display name", "customer name", "client", "contact"})
+_LINE = re.compile(r"(?:[^\n\r\\]|\\(?![nr]))+")
+
+
+def _cells(row: str, sep: str, offset: int) -> List[Tuple[int, str]]:
+    """(absolute start, value) of each cell, quotes and spaces trimmed."""
+    out: List[Tuple[int, str]] = []
+    pos = 0
+    for part in row.split(sep):
+        val = part.strip().strip("\"'").strip()
+        out.append((offset + pos + part.find(val) if val else offset + pos, val))
+        pos += len(part) + len(sep)
+    return out
+
+
 _CELL_L = re.compile(r"(?:[\t|;]|\\t)$")
 _CELL_R = re.compile(r"[\t|;]|\\t")
 
@@ -173,7 +193,7 @@ class Names:
         parts = _SPLIT.split(word)
         return norm(parts[-1] if len(parts) > 1 and _PARTICLE.match(parts[0]) else word)
 
-    def family_ok(self, word: str, near_clear_first: bool) -> bool:
+    def family_ok(self, word: str, near_clear_first: bool, sure: bool = False) -> bool:
         n = self._core(word)
         if len(n) < 2 or n in self.never or n in _ORG:
             return False
@@ -182,7 +202,11 @@ class Names:
             return False
         if not self.common(n):
             return True
-        return near_clear_first and n not in self.ambiguous and self.rank.get(n, 10**9) >= _RANK_NEAR_FIRST
+        if not near_clear_first or self.rank.get(n, 10**9) < _RANK_NEAR_FIRST:
+            return False
+        # « Emily Carter », « Mr. Anderson » : a word that is also a surname or a
+        # first name is a person's name right after a sure first name or a title.
+        return n not in self.ambiguous or (sure and n in self.family)
 
     # -- detection ---------------------------------------------------------
 
@@ -230,11 +254,50 @@ class Names:
                 found.append((start, start + len(val), "PRENOM", val))
             else:
                 self._split(start, val, found)
+        self._tables(text, found)
         for m in _HDR.finditer(text):
             val = m.group(1)
             if all(norm(w) in self.never or self.common(norm(w)) and not self.is_first(w) for w in val.split()):
                 continue
             self._split(m.start(1), val, found)
+
+    def _tables(self, text: str, found: List[Span]) -> None:
+        """CSV or TSV export: the header names the columns that hold people."""
+        cols: Dict[int, str] = {}
+        sep = ""
+        for line in _LINE.finditer(text):
+            row = line.group(0)
+            if cols:
+                cells = _cells(row, sep, line.start())
+                if len(cells) <= max(cols):
+                    cols = {}
+                else:
+                    for index, kind in cols.items():
+                        start, val = cells[index]
+                        words = [w for w in _SPLIT.split(val) if w]
+                        if not _NAMEISH.match(val) or not 0 < len(words) <= 4:
+                            continue
+                        if any(norm(w) in self.never or norm(w) in _ORG for w in words):
+                            continue
+                        if kind == "FULL":
+                            if self.is_first(words[0]) or self.is_first(words[-1]):
+                                self._split(start, val, found)
+                        elif len(norm(val)) >= 2:
+                            found.append((start, start + len(val), kind, val))
+                    continue
+            for candidate in ("\t", "\\t", ";", "|", ","):
+                if candidate not in row:
+                    continue
+                heads = [norm(val.strip("_ ")).replace("_", " ").replace("-", " ") for _s, val in _cells(row, candidate, line.start())]
+                first = [i for i, h in enumerate(heads) if h in _COL_FIRST]
+                last = [i for i, h in enumerate(heads) if h in _COL_LAST or (h in _COL_NAME and first)]
+                full = [i for i, h in enumerate(heads) if h in _COL_FULL or (h in _COL_NAME and not first)]
+                if first or last or full:
+                    sep = candidate
+                    cols = {i: "PRENOM" for i in first}
+                    cols.update({i: "NOM" for i in last})
+                    cols.update({i: "FULL" for i in full if i not in cols})
+                    break
 
     def _split(self, start: int, val: str, found: List[Span]) -> None:
         """« Marie Dupont » in a field gives the same two tokens as in a sentence."""
@@ -262,6 +325,9 @@ class Names:
             pos = m.start(2)
             a, b, c = m.group(1), m.group(2), m.group(3)
             clear = self.clear_first(a)
+            # Sure: a frequent first name written as a name, not a doubtful one
+            # promoted by what follows, not a word in capitals.
+            sure = clear and not a.isupper()
             if (
                 self.clear_first(b) and not self.is_first(a) and len(a) >= 4
                 and self.family_ok(a, False)
@@ -303,7 +369,7 @@ class Names:
                 continue
             if _ORG_BEFORE.search(text[max(0, m.start() - 12):m.start()]):
                 continue
-            if self.family_ok(b, clear):
+            if self.family_ok(b, clear, sure):
                 found.append((m.start(1), m.end(1), "PRENOM", a))
                 end = m.end(3) if c and self.family_ok(c, False) else m.end(2)
                 found.append((m.start(2), end, "NOM", text[m.start(2):end]))
@@ -315,7 +381,7 @@ class Names:
                 found.append((m.start(1), m.end(1), "PRENOM", m.group(1)))
         for m in _CIV.finditer(text):
             word = m.group(1)
-            if self.family_ok(word, True) or self.clear_first(word):
+            if self.family_ok(word, True, True) or self.clear_first(word):
                 found.append((m.start(1), m.end(1), "NOM", word))
         for m in _SIGN.finditer(text):
             if not self.is_first(m.group(1)):
@@ -332,7 +398,9 @@ class Names:
                     continue
                 if n in self.first:
                     # « Mme Martin » does not make every « Martin » a masked word.
-                    if kind == "PRENOM":
+                    # A rare first name that is also a word (« Piper », « Noble ») is
+                    # masked next to its surname, never alone afterwards.
+                    if kind == "PRENOM" and not (n in self.rare and n in self.rank):
                         known.setdefault(n, "PRENOM")
                 elif len(n) >= 4 and not self.common(n) and self.rank.get(n, 10**9) >= _RANK_ALONE:
                     known.setdefault(n, "NOM")
