@@ -1,14 +1,20 @@
-"""Round-trip mask: high-confidence patterns plus an explicit name/address list."""
+"""Round-trip mask: high-confidence patterns, person names, and an explicit list."""
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import re
 import threading
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-VERSION = "0.3.2"
+try:
+    from . import noms
+except ImportError:  # running the file outside the package (tests)
+    import noms  # type: ignore
+
+VERSION = "0.4.0"
 
 # Order: more specific first. No Discord snowflakes. No bare first names.
 _PATTERNS: List[Tuple[str, re.Pattern[str]]] = [
@@ -91,7 +97,7 @@ _PATTERNS: List[Tuple[str, re.Pattern[str]]] = [
     ),
 ]
 
-_PLACEHOLDER_RE = re.compile(r"\[(EMAIL|IBAN|PHONE|API_KEY|ADDRESS|NOM|CARD)_(\d+)\]")
+_PLACEHOLDER_RE = re.compile(r"\[(EMAIL|IBAN|PHONE|API_KEY|ADDRESS|PRENOM|NOM|CARD)_(\d+)\]")
 _CHUNK = 500_000
 _WALK_KEYS = (
     "messages", "input", "instructions", "system", "tools", "prompt",
@@ -110,7 +116,18 @@ _LABELS = {
     "ADDRESS": ("adresse", "adresses"),
     "CARD": ("carte", "cartes"),
     "NOM": ("nom", "noms"),
+    "PRENOM": ("prénom", "prénoms"),
 }
+
+# Where a text comes from decides how names are treated:
+#   private: names are detected, masked and remembered for the session;
+#   known:   only names already seen in private text are masked.
+PRIVATE, KNOWN = "private", "known"
+# Results of these tools are public web text: a minister or « Louis Vuitton »
+# stays readable. Anything else (files, mail, CRM, browser pages) is private.
+_WEB_TOOLS = ("*web_search*", "*web_extract*", "*web_fetch*", "*websearch*", "*webfetch*", "x_search")
+_KNOWN_KEYS = frozenset({"system", "instructions", "tools", "system_instruction", "systemInstruction"})
+_KNOWN_ROLES = frozenset({"assistant", "model", "system", "developer"})
 
 # Words that alone are not a street name; the validator wants a real name after them.
 _STREET_WORDS = re.compile(
@@ -225,11 +242,75 @@ class TermStore:
 
 
 _terms = TermStore()
+_names_enabled = True
+_excluded: Set[str] = set()
+_web_tools: Tuple[str, ...] = _WEB_TOOLS
+_config_dir: Optional[Path] = None
+_names: Optional["noms.Names"] = None
+
+
+def _read_lines(path: Path) -> List[str]:
+    if not path.is_file():
+        return []
+    lines = path.read_text(encoding="utf-8").splitlines()
+    return [ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")]
 
 
 def set_terms_path(path: Path) -> None:
-    global _terms
+    """`path` is the personal list; the same folder holds the name settings:
+    exclus.txt (words never treated as a name), outils-web.txt (tools whose
+    results are public web text) and noms-off (name detection switched off)."""
+    global _terms, _config_dir, _excluded, _web_tools, _names, _names_enabled
     _terms = TermStore(path)
+    _config_dir = path.parent
+    _excluded = {noms.norm(w) for w in _read_lines(_config_dir / "exclus.txt")}
+    _web_tools = tuple(_read_lines(_config_dir / "outils-web.txt")) or _WEB_TOOLS
+    _names_enabled = not (_config_dir / "noms-off").exists()
+    _names = None
+
+
+def _detector() -> Optional["noms.Names"]:
+    global _names
+    if not _names_enabled or not noms.available():
+        return None
+    if _names is None:
+        _names = noms.Names(set(_NEVER) | _excluded)
+    return _names
+
+
+def names_enabled() -> bool:
+    return _names_enabled and noms.available()
+
+
+def set_names_enabled(enabled: bool) -> None:
+    global _names_enabled
+    _names_enabled = enabled
+    if _config_dir:
+        flag = _config_dir / "noms-off"
+        if enabled:
+            flag.unlink(missing_ok=True)
+        else:
+            _config_dir.mkdir(parents=True, exist_ok=True)
+            flag.write_text("", encoding="utf-8")
+
+
+def exclude_name(word: str) -> str:
+    """A word the user never wants treated as a person: a brand, a product, an agent."""
+    global _names
+    clean = " ".join(word.split())
+    if len(clean) < 2:
+        return "Donne le mot à ne jamais masquer."
+    for part in clean.split():
+        _excluded.add(noms.norm(part))
+    _names = None
+    with _maps_lock:
+        for table in _maps.values():
+            for part in clean.split():
+                table.known.pop(noms.norm(part), None)
+    if _config_dir:
+        _config_dir.mkdir(parents=True, exist_ok=True)
+        (_config_dir / "exclus.txt").write_text("\n".join(sorted(_excluded)) + "\n", encoding="utf-8")
+    return f"« {clean} » ne sera plus pris pour un nom de personne."
 
 
 def terms() -> TermStore:
@@ -270,6 +351,9 @@ class PiiMap:
         self.original_to_placeholder: Dict[str, str] = {}
         self.placeholder_to_original: Dict[str, str] = {}
         self._next_id: Dict[str, int] = {}
+        # Names seen in private text during this session: word -> PRENOM | NOM.
+        self.known: Dict[str, str] = {}
+        self._scanned: Set[int] = set()
 
     def counts(self) -> Dict[str, int]:
         out: Dict[str, int] = {}
@@ -278,16 +362,35 @@ class PiiMap:
             out[kind] = out.get(kind, 0) + 1
         return out
 
-    def mask_text(self, text: str) -> str:
+    def learn(self, text: str, mode: str = PRIVATE) -> str:
+        """Remember the names of a private text without masking it. Run on the
+        whole request first, so a name met late is masked from the first line."""
+        detector = _detector()
+        if detector is None or mode != PRIVATE or not text:
+            return text
+        key = hash(text)
+        with self._lock:
+            if key not in self._scanned:
+                self._scanned.add(key)
+                detector.detect(text, self.known)
+        return text
+
+    def mask_text(self, text: str, mode: str = PRIVATE) -> str:
         if not text:
             return text
         with self._lock:
             if len(text) <= _CHUNK:
-                return self._mask_chunk(text)
-            return "".join(self._mask_chunk(part) for part in _chunks(text))
+                return self._mask_chunk(text, mode)
+            return "".join(self._mask_chunk(part, mode) for part in _chunks(text))
 
-    def _mask_chunk(self, text: str) -> str:
+    def _mask_chunk(self, text: str, mode: str = PRIVATE) -> str:
         matches: List[Tuple[int, int, str, str]] = []
+        detector = _detector()
+        if detector is not None:
+            if mode == PRIVATE:
+                matches.extend(detector.detect(text, self.known))
+            else:
+                matches.extend(detector.known_spans(text, self.known))
         for kind, rx in _PATTERNS:
             for m in rx.finditer(text):
                 value = m.group(0).strip()
@@ -340,7 +443,13 @@ class PiiMap:
     def _placeholder_for(self, kind: str, value: str) -> str:
         # An email is the same address whatever its case: one token, restored
         # with the first spelling seen.
-        key = value.lower() if kind == "EMAIL" else value
+        if kind == "EMAIL":
+            key = value.lower()
+        elif kind in ("NOM", "PRENOM"):
+            # « DUPONT », « Dupont » and « dupont » are one person: one token.
+            key = kind + ":" + noms.norm(value)
+        else:
+            key = value
         existing = self.original_to_placeholder.get(key)
         if existing:
             return existing
@@ -411,6 +520,8 @@ def self_test() -> Tuple[int, int, List[str]]:
         ("clé API", "sk-ant-" + "a1B2" * 6),
         ("adresse", "[ADDRESS_46]"),
     ]
+    if names_enabled():
+        samples.append(("nom de personne", "Bonjour, je suis Camille Lefebvre."))
     failures: List[str] = []
     for label, sample in samples:
         table = PiiMap()
@@ -451,33 +562,87 @@ def status_text(session_id: str = "") -> str:
     )
 
 
-def mask_value(value: Any, table: PiiMap) -> Any:
-    if isinstance(value, str):
-        return table.mask_text(value)
+def _is_web_tool(name: str) -> bool:
+    low = (name or "").lower()
+    return any(fnmatch.fnmatch(low, pattern.lower()) for pattern in _web_tools)
+
+
+def _tool_names(value: Any, out: Dict[str, str]) -> None:
+    """Map each tool-call id to its tool name, whatever the provider format."""
     if isinstance(value, list):
-        return [mask_value(item, table) for item in value]
+        for item in value:
+            _tool_names(item, out)
+    elif isinstance(value, dict):
+        ident = value.get("call_id") or value.get("id")
+        fn = value.get("function")
+        name = fn.get("name") if isinstance(fn, dict) else value.get("name")
+        if isinstance(ident, str) and isinstance(name, str) and (
+            isinstance(fn, dict) or value.get("type") in ("tool_use", "function_call", "server_tool_use")
+        ):
+            out[ident] = name
+        for item in value.values():
+            if isinstance(item, (list, dict)):
+                _tool_names(item, out)
+
+
+def _mode_of(value: Dict[str, Any], mode: str, tools: Dict[str, str]) -> str:
+    """Provenance of one message or content block."""
+    role, kind = value.get("role"), value.get("type")
+    if role in _KNOWN_ROLES:
+        return KNOWN
+    if role == "user":
+        return PRIVATE
+    name: Optional[str] = None
+    if role == "tool" or kind in ("tool_result", "function_call_output"):
+        ident = value.get("tool_call_id") or value.get("tool_use_id") or value.get("call_id")
+        name = tools.get(ident, "") if isinstance(ident, str) else ""
+        if not name and isinstance(value.get("name"), str):
+            name = value["name"]
+    elif isinstance(value.get("functionResponse"), dict):
+        name = str(value["functionResponse"].get("name") or "")
+    if name is not None:
+        return KNOWN if _is_web_tool(name) else PRIVATE
+    return mode
+
+
+def mask_value(
+    value: Any,
+    table: PiiMap,
+    mode: str = PRIVATE,
+    tools: Optional[Dict[str, str]] = None,
+    learn: bool = False,
+) -> Any:
+    if isinstance(value, str):
+        return table.learn(value, mode) if learn else table.mask_text(value, mode)
+    if isinstance(value, list):
+        return [mask_value(item, table, mode, tools, learn) for item in value]
     if isinstance(value, dict):
         # A signed thinking block is tied to its exact text: masking it would break
         # the signature and the provider would reject the replayed turn with a 400.
         if "signature" in value and ("thinking" in value or "reasoning" in value):
             return value
+        here = _mode_of(value, mode, tools or {})
         return {
-            key: _mask_arguments(item, table) if key == "arguments" and isinstance(item, str)
-            else mask_value(item, table)
+            key: _mask_arguments(item, table, here, learn) if key == "arguments" and isinstance(item, str)
+            else mask_value(item, table, here, tools, learn)
             for key, item in value.items()
         }
     return value
 
 
-def _mask_arguments(raw: str, table: PiiMap) -> str:
+def _mask_arguments(raw: str, table: PiiMap, mode: str = PRIVATE, learn: bool = False) -> str:
     """Tool-call arguments are a JSON string: mask the decoded values, never the
     raw text, or a regex hit on an escape such as the n of \\n can leave a lone
     backslash and make the provider reject the call as invalid JSON."""
     try:
         decoded = json.loads(raw)
     except (TypeError, ValueError):
-        return table.mask_text(raw)
-    return json.dumps(mask_value(decoded, table), ensure_ascii=False)
+        return table.learn(raw, mode) if learn else table.mask_text(raw, mode)
+    if learn:
+        mask_value(decoded, table, mode, None, True)
+        return raw
+    masked = mask_value(decoded, table, mode)
+    return raw if masked == decoded else json.dumps(masked, ensure_ascii=False)
 
 
 def unmask_value(value: Any, table: PiiMap) -> Any:
@@ -495,7 +660,14 @@ def mask_llm_request(request: Dict[str, Any], session_id: str = "") -> Dict[str,
     if not table.enabled:
         return request
     updated = dict(request)
+    tools: Dict[str, str] = {}
     for key in _WALK_KEYS:
-        if key in updated:
-            updated[key] = mask_value(updated[key], table)
+        if key in updated and key not in _KNOWN_KEYS:
+            _tool_names(updated[key], tools)
+    modes = {key: KNOWN if key in _KNOWN_KEYS else PRIVATE for key in _WALK_KEYS if key in updated}
+    if _detector() is not None:
+        for key, mode in modes.items():
+            mask_value(updated[key], table, mode, tools, learn=True)
+    for key, mode in modes.items():
+        updated[key] = mask_value(updated[key], table, mode, tools)
     return request if updated == request else updated

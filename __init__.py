@@ -12,9 +12,10 @@ from hermes_constants import get_hermes_home
 from . import masker
 
 _NOTICE = (
-    "Privacy: bracket tokens EMAIL, PHONE, IBAN, API_KEY, ADDRESS, NOM plus a number "
-    "are placeholders for private values. Use them verbatim in tool calls; they "
-    "are restored before tools run."
+    "Privacy: bracket tokens EMAIL, PHONE, IBAN, API_KEY, ADDRESS, PRENOM, NOM plus a "
+    "number are placeholders for private values (PRENOM = first name, NOM = family "
+    "name; the same token is always the same person). Use them verbatim in tool "
+    "calls; they are restored before tools run."
 )
 _HELP = (
     "/masquer status  : état du mode auto\n"
@@ -24,6 +25,8 @@ _HELP = (
     "/masquer ajouter Marie Dupont  : ajoute un nom à masquer\n"
     "/masquer retirer Marie Dupont  : l'enlève\n"
     "/masquer liste  : montre les noms ajoutés\n"
+    "/masquer noms on|off  : détection automatique des noms de personnes\n"
+    "/masquer exclure Mistral  : ce mot n'est jamais pris pour une personne\n"
     "/masquer ...  : masque un texte collé, ou un fichier"
 )
 _CHAT_LIMIT = 1500
@@ -176,7 +179,12 @@ def _on_slash(raw_args: str) -> str:
         return "Mode auto éteint. Les messages partent tels quels au modèle. /masquer … marche encore à la demande."
     if key in {"on"}:
         masker.set_global_enabled(True)
-        return "Mode auto allumé. Emails, téléphones, IBAN, adresses claires, cartes, clés, et les noms de ta liste."
+        return "Mode auto allumé. Emails, téléphones, IBAN, adresses claires, cartes, clés, noms de personnes, et ta liste."
+    if key in {"noms on", "noms off"}:
+        masker.set_names_enabled(key.endswith("on"))
+        if key.endswith("on"):
+            return "Détection des noms allumée : prénoms et noms des textes privés sont masqués."
+        return "Détection des noms éteinte. Seuls les noms de ta liste sont masqués."
     if key in {"help", "aide"}:
         return _HELP
     if key in {"liste", "list"}:
@@ -185,6 +193,8 @@ def _on_slash(raw_args: str) -> str:
     head = first.lower()
     if head in {"ajouter", "add"} and rest.strip():
         return masker.terms().add(rest)
+    if head in {"exclure", "exclude"} and rest.strip():
+        return masker.exclude_name(rest)
     if head in {"retirer", "enlever", "remove"} and rest.strip():
         return masker.terms().remove(rest)
     return _anonymize(arg)
@@ -208,5 +218,5 @@ def register(ctx) -> None:
         "pii-mask.notice",
         _NOTICE,
         position="after_memory",
-        max_chars=400,
+        max_chars=500,
     )
