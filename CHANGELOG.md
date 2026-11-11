@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0
+
+- Nouveau : détection automatique des noms de personnes, sans modèle et sans liste à fournir. Dictionnaire de prénoms et de mots courants embarqué (français, anglais, prénoms internationaux), champs structurés (`first_name`, `author`, `From:`), formules (`Bonjour X`, `M. X`, signatures) et mémoire de session. Jetons `[PRENOM_n]` et `[NOM_n]`, identiques pour une même personne pendant toute la session.
+- Nouveau : règle par provenance pour les personnes publiques. Les résultats des outils web gardent leurs noms ; tout le reste est masqué ; un nom déjà vu en privé reste masqué partout. Liste des outils web réglable dans `pii-mask/outils-web.txt`.
+- Nouveau : `/masquer noms on|off` (réglage gardé entre deux redémarrages) et `/masquer exclure <mot>`.
+- Le prompt système et les réponses de l'agent ne servent pas à apprendre de nouveaux noms : seuls les noms déjà vus en privé y sont masqués.
+- Limites connues : prénom seul sans contexte, nom en minuscules, prénom hors dictionnaire. Détail et mesure dans le README.
+
 ## 0.3.2
 
 - Correctif : un nombre de 13 ou 14 chiffres (horodatage en millisecondes, identifiant) n'est plus masqué comme une carte bancaire. Une carte se masque à 15 ou 16 chiffres, toujours validée par la clé de Luhn.
